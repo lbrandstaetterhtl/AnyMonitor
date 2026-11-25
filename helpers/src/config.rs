@@ -1,11 +1,12 @@
 ﻿use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::net::Ipv4Addr;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
     pub log_file: PathBuf,
-    pub address: String,
+    pub address: Ipv4Addr,
     pub port: u16,
 }
 
@@ -52,6 +53,6 @@ impl Config {
         let config_path = Self::system_config_path();
         let log_file = config_path.parent().unwrap().join("runtime.log");
 
-        Config {log_file, address: "127.0.0.1".to_string(), port: 8000}
+        Config {log_file, address: Ipv4Addr::new(127, 0, 0, 1), port: 8000}
     }
 }
