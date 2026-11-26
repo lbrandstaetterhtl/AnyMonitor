@@ -4,7 +4,7 @@ use std::time::Duration;
 use axum::extract::{ConnectInfo, Path, State};
 use axum::{Json, Router};
 use axum::http::HeaderMap;
-use axum::routing::{get, head, post};
+use axum::routing::{delete, get, head, post};
 use reqwest::StatusCode;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -33,11 +33,15 @@ struct ProcessInfo {
 }
 
 pub fn get_router() -> Router<AppState> {
+    let monitor_routes = Router::new()
+        .route("/start", post(monitor))
+        .route("/stop/{id}", delete(stop_monitor))
+        .route("/history/{id}", get(get_entry_history));
+
     Router::new()
         .route("/", get(root))
         .route("/status", get(status))
-        .route("/monitor", post(monitor))
-        .route("/history/{id}", get(get_entry_history))
+        .nest("/monitor", monitor_routes)
         .route("/ui", get(ui))
 }
 
@@ -84,8 +88,8 @@ async fn status(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(a
 
 async fn monitor(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(addr): ConnectInfo<SocketAddr>, Json(req): Json<MonitorReq>) -> Result<Json<Value>, StatusCode> {
     let key = headers.get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or_else(|| "");
-
     require_key(key, State(state.clone()), addr, "/monitor")?;
+
     state.logger.set_mode(LoggerMode::Info);
     let _ = state.logger.log(format!("/monitor was called from {}", addr.ip()).as_str());
 
@@ -115,7 +119,6 @@ async fn monitor(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(
 
 async fn get_entry_history(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(addr): ConnectInfo<SocketAddr>, Path(id): Path<Uuid>) -> Result<Json<Value>, StatusCode> {
     let key = headers.get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or_else(|| "");
-
     require_key(key, State(state.clone()), addr, format!("/history/{}", id).as_str())?;
 
     state.logger.set_mode(LoggerMode::Info);
@@ -146,24 +149,27 @@ fn require_key(key: &str, State(state): State<AppState>, addr: SocketAddr, path:
     }
 }
 
-pub async fn icmp_loop(id: Uuid, ip: Ipv4Addr, interval: u64, state: AppState) {
-    let token = state.shutdown.clone();
-    let mut ticker = tokio::time::interval(Duration::from_secs(interval));
-    ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
-    loop {
-        tokio::select! {
-            _ = token.cancelled() => break,
-            _ = ticker.tick() => {
-                let result = monitor::full_icmp_check(ip).await;
-                state.record_result(id, result);
-            }
-        }
-    }
-}
-
 use axum::response::Html;
 
-async fn ui() -> Html<&'static str> {
+async fn ui(State(state): State<AppState>, ConnectInfo(addr): ConnectInfo<SocketAddr>) -> Html<&'static str> {
+    state.logger.set_mode(LoggerMode::Info);
+    let _ = state.logger.log(format!("/ui was called from {}", addr.ip()).as_str());
     Html(include_str!("static/index.html"))
+}
+
+async fn stop_monitor(State(state): State<AppState>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Path(id): Path<Uuid>) -> Result<Json<Value>, StatusCode> {
+    let key = headers.get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or_else(|| "");
+    require_key(key, State(state.clone()), addr, format!("/monitor/{}", id).as_str())?;
+
+    state.logger.set_mode(LoggerMode::Info);
+    let _ = state.logger.log(format!("/monitor/stop/{} was called from {}", id, addr.ip()).as_str());
+
+    match state.stop_icmp_monitor(id) {
+        Ok(_) => {
+            state.logger.set_mode(LoggerMode::Info);
+            let _ = state.logger.log(format!("monitor with id {} successfully stopped", id).as_str());
+            Ok(Json(json!({"message": format!("monitor with id {} successfully stopped", id).as_str()})))
+        },
+        Err(_) => Err(StatusCode::EXPECTATION_FAILED)
+    }
 }

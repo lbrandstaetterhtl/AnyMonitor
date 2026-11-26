@@ -5,596 +5,204 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AnyMonitor</title>
   <style>
-    :root {
-      --bg: #f5f6f8;
-      --panel: #ffffff;
-      --text: #1d2228;
-      --muted: #6b7380;
-      --border: #dde1e6;
-      --accent: #2f6fde;
-      --ok: #1f8a4c;
-      --bad: #c8362f;
-      --code-bg: #f1f3f6;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #14171b;
-        --panel: #1c2026;
-        --text: #e4e7eb;
-        --muted: #8b939e;
-        --border: #2c323a;
-        --accent: #5b8ff0;
-        --ok: #3fb871;
-        --bad: #e5615a;
-        --code-bg: #161a1f;
-      }
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
-      background: var(--bg);
-      color: var(--text);
-    }
-    header {
-      padding: 14px 24px;
-      border-bottom: 1px solid var(--border);
-      background: var(--panel);
-      display: flex;
-      gap: 16px;
-      align-items: flex-end;
-      flex-wrap: wrap;
-    }
-    header h1 { font-size: 18px; margin: 0 16px 4px 0; }
-    main {
-      max-width: 1100px;
-      margin: 0 auto;
-      padding: 24px;
-      display: grid;
-      gap: 20px;
-    }
-    section {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 16px 18px;
-    }
-    section h2 {
-      font-size: 15px;
-      margin: 0 0 12px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    label {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      font-size: 12px;
-      color: var(--muted);
-    }
-    label.inline { flex-direction: row; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
-    input, select, textarea {
-      font: inherit;
-      color: var(--text);
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 6px 8px;
-    }
-    input[type="checkbox"] { padding: 0; }
-    textarea {
-      font-family: ui-monospace, Consolas, monospace;
-      font-size: 13px;
-      min-height: 110px;
-      resize: vertical;
-      width: 100%;
-    }
-    button {
-      font: inherit;
-      border: 1px solid var(--accent);
-      background: var(--accent);
-      color: #fff;
-      border-radius: 6px;
-      padding: 7px 14px;
-      cursor: pointer;
-    }
-    button:disabled { opacity: 0.5; cursor: default; }
-    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 12px; }
-    .badge {
-      font-size: 12px;
-      font-weight: 600;
-      padding: 2px 8px;
-      border-radius: 999px;
-      border: 1px solid var(--border);
-      color: var(--muted);
-    }
-    .badge:empty { display: none; }
-    .badge.ok { color: var(--ok); border-color: var(--ok); }
-    .badge.bad { color: var(--bad); border-color: var(--bad); }
-    pre {
-      background: var(--code-bg);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 10px;
-      margin: 8px 0 0;
-      overflow: auto;
-      max-height: 320px;
-      font: 12.5px/1.45 ui-monospace, Consolas, monospace;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    details summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 4px; }
-    .stats {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-      gap: 10px;
-      margin-bottom: 12px;
-    }
-    .stats:empty { display: none; }
-    .stat { border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
-    .stat .k { font-size: 12px; color: var(--muted); }
-    .stat .v { font-size: 18px; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-    .table-wrap {
-      max-height: 380px;
-      overflow: auto;
-      border: 1px solid var(--border);
-      border-radius: 6px;
-    }
-    .table-wrap:has(table:empty) { display: none; }
-    table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
-    th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-    th {
-      color: var(--muted);
-      font-weight: 600;
-      font-size: 12px;
-      position: sticky;
-      top: 0;
-      background: var(--panel);
-    }
-    th.num, td.num { text-align: right; }
-    .true { color: var(--ok); font-weight: 600; }
-    .false { color: var(--bad); font-weight: 600; }
-    .null { color: var(--muted); }
-    .hint { font-size: 12px; color: var(--muted); margin: 0 0 12px; }
-    .message { font-size: 13px; color: var(--muted); margin: 0 0 12px; }
-    .message:empty { display: none; }
-    code { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+    :root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; }
+    body { max-width: 900px; margin: 0 auto; padding: 16px; }
+    header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+    h1 { font-size: 20px; margin: 0; }
+    h2 { font-size: 16px; margin: 0 0 10px; }
+    section { border: 1px solid #8884; border-radius: 8px; padding: 12px 16px; margin: 16px 0; }
+    input, button { font: inherit; padding: 4px 8px; }
+    form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    table { width: 100%; border-collapse: collapse; margin-top: 10px; font-variant-numeric: tabular-nums; }
+    th, td { padding: 5px 8px; border-bottom: 1px solid #8883; text-align: left; white-space: nowrap; }
+    th { font-weight: 600; font-size: 12px; }
+    .r { text-align: right; }
+    .ok { color: #1f8a4c; font-weight: 600; }
+    .bad { color: #d0453c; font-weight: 600; }
+    .muted { color: GrayText; }
+    #msg { color: #d0453c; min-height: 1.5em; margin: 8px 0 0; }
   </style>
 </head>
 <body>
 
 <header>
   <h1>AnyMonitor</h1>
-  <label>Server
-    <input id="baseUrl" size="28" spellcheck="false">
-  </label>
-  <label>API-Key
-    <input id="apiKey" type="password" size="28" autocomplete="off">
-  </label>
+  <label>API-Key <input id="key" type="password" autocomplete="off"></label>
 </header>
+<p id="msg"></p>
 
-<main>
+<section>
+  <h2>Status</h2>
+  <button id="btnStatus">Abrufen</button>
+  <span id="status" class="muted"></span>
+</section>
 
-  <!-- ---------- Status ---------- -->
-  <section>
-    <h2>Status <span id="statusBadge" class="badge"></span></h2>
-    <div class="row">
-      <button id="btnStatus">Status abrufen</button>
-    </div>
-    <div id="statusStats" class="stats"></div>
-    <details>
-      <summary>Rohantwort</summary>
-      <pre id="statusRaw">–</pre>
-    </details>
-  </section>
+<section>
+  <h2>Monitore</h2>
+  <form id="startForm">
+    <input id="target" placeholder="Ziel-IP" value="127.0.0.1" required>
+    <label>alle <input id="interval" type="number" min="1" value="5" style="width: 60px"> s</label>
+    <button>ICMP-Monitor starten</button>
+  </form>
+  <table id="monitors"></table>
+</section>
 
-  <!-- ---------- Monitor starten ---------- -->
-  <section>
-    <h2>Monitor starten <span id="monBadge" class="badge"></span></h2>
-    <div class="row">
-      <label>Ziel-IP
-        <input id="monTarget" value="127.0.0.1" size="16" spellcheck="false">
-      </label>
-      <label>Strategie
-        <select id="monStrategy">
-          <option value="Icmp">ICMP</option>
-          <option value="Http" disabled>HTTP (noch nicht umgesetzt)</option>
-          <option value="Tcp" disabled>TCP (noch nicht umgesetzt)</option>
-          <option value="Heartbeat" disabled>Heartbeat (noch nicht umgesetzt)</option>
-        </select>
-      </label>
-      <label>Intervall (s)
-        <input id="monInterval" type="number" min="1" value="5" style="width: 90px">
-      </label>
-    </div>
-    <label>Request-Body (wird aus den Feldern erzeugt, kann direkt bearbeitet werden)
-      <textarea id="monBody" spellcheck="false"></textarea>
-    </label>
-    <p class="hint">
-      Der Body muss zu <code>MonitorReq</code> passen. Je nach serde-Attributen auf
-      <code>MonitorStrat</code> ist die Strategie <code>"Icmp"</code>, <code>"icmp"</code>
-      oder ein Objekt wie <code>{"Icmp": {"size": 32}}</code>. Bei 422 steht der genaue Grund
-      in der Antwort.
-    </p>
-    <div class="row">
-      <button id="btnMonitor">Monitor starten</button>
-    </div>
-    <p id="monMessage" class="message"></p>
-    <details>
-      <summary>Rohantwort</summary>
-      <pre id="monRaw">–</pre>
-    </details>
-  </section>
-
-  <!-- ---------- History ---------- -->
-  <section>
-    <h2>History <span id="histBadge" class="badge"></span></h2>
-    <div class="row">
-      <label>Monitor-ID
-        <input id="histId" list="knownIds" size="40" spellcheck="false" placeholder="UUID">
-        <datalist id="knownIds"></datalist>
-      </label>
-      <button id="btnHistory">Laden</button>
-      <label class="inline">
-        <input id="histAuto" type="checkbox"> alle 5 s aktualisieren
-      </label>
-    </div>
-    <p id="histMessage" class="message"></p>
-    <div id="histStats" class="stats"></div>
-    <div class="table-wrap"><table id="histTable"></table></div>
-    <details>
-      <summary>Rohantwort</summary>
-      <pre id="histRaw">–</pre>
-    </details>
-  </section>
-
-</main>
+<section id="historySection" hidden>
+  <h2>Verlauf <span id="historyTitle" class="muted"></span></h2>
+  <table>
+    <thead>
+    <tr><th>Zeit</th><th>Status</th><th class="r">Antworten</th><th class="r">Verlust</th><th class="r">Ø RTT</th><th>Fehler</th></tr>
+    </thead>
+    <tbody id="history"></tbody>
+  </table>
+</section>
 
 <script>
   const $ = (id) => document.getElementById(id);
 
-  // ---------- Einstellungen im Browser merken ----------
+  // ---------- API ----------
 
-  const store = {
-    get(key, fallback) {
-      try {
-        const value = localStorage.getItem(key);
-        return value === null ? fallback : JSON.parse(value);
-      } catch {
-        return fallback;
-      }
-    },
-    set(key, value) {
-      try {
-        localStorage.setItem(key, JSON.stringify(value));
-      } catch {
-        // z. B. bei file:// oder gesperrtem Speicher einfach ignorieren
-      }
+  $("key").value = localStorage.getItem("am.key") ?? "";
+  $("key").onchange = () => localStorage.setItem("am.key", $("key").value);
+
+  async function api(method, path, body) {
+    const headers = { "x-api-key": $("key").value };
+    if (body) headers["Content-Type"] = "application/json";
+
+    const res = await fetch(path, { method, headers, body: body && JSON.stringify(body) });
+    const text = await res.text();
+
+    if (!res.ok) {
+      const err = new Error(`${res.status} ${res.statusText}${text ? ": " + text : ""}`);
+      err.status = res.status;
+      throw err;
     }
-  };
-
-  function defaultBaseUrl() {
-    return location.protocol.startsWith("http") ? location.origin : "http://127.0.0.1:8000";
+    return text ? JSON.parse(text) : null;
   }
 
-  $("baseUrl").value = store.get("anymonitor.baseUrl", defaultBaseUrl());
-  $("apiKey").value = store.get("anymonitor.apiKey", "");
-  $("baseUrl").addEventListener("change", () => store.set("anymonitor.baseUrl", $("baseUrl").value.trim()));
-  $("apiKey").addEventListener("change", () => store.set("anymonitor.apiKey", $("apiKey").value));
-
-  // ---------- Requests ----------
-
-  async function call(method, path, body) {
-    const base = $("baseUrl").value.trim().replace(/\/+$/, "");
-    const headers = { "x-api-key": $("apiKey").value };
-    if (body !== undefined) {
-      headers["Content-Type"] = "application/json";
-    }
-
-    let response;
+  async function run(action) {
     try {
-      response = await fetch(base + path, { method, headers, body });
-    } catch (err) {
-      return { ok: false, status: 0, statusText: "keine Verbindung", text: String(err), data: null };
+      await action();
+      $("msg").textContent = "";
+    } catch (e) {
+      $("msg").textContent = e.status === 401 ? "API-Key fehlt oder ist falsch." : e.message;
     }
-
-    const text = await response.text();
-    let data = null;
-    if (text) {
-      try {
-        data = JSON.parse(text);
-      } catch {
-        data = null;
-      }
-    }
-    return { ok: response.ok, status: response.status, statusText: response.statusText, text, data };
-  }
-
-  function setBadge(element, result) {
-    element.textContent = result.status === 0
-            ? "keine Verbindung"
-            : `${result.status} ${result.statusText}`.trim();
-    element.className = "badge " + (result.ok ? "ok" : "bad");
-  }
-
-  function showRaw(element, result) {
-    if (result.status === 0) {
-      element.textContent =
-              "Request fehlgeschlagen: " + result.text + "\n\n" +
-              "Mögliche Ursachen: Server läuft nicht, falsche Server-URL, " +
-              "Seite nicht über den Server geöffnet (CORS) oder ein Handler ist abgestürzt (panic!).";
-    } else if (result.data !== null) {
-      element.textContent = JSON.stringify(result.data, null, 2);
-    } else {
-      element.textContent = result.text || "(leere Antwort)";
-    }
-  }
-
-  function errorMessage(result) {
-    if (result.status === 0) return "Keine Verbindung zum Server.";
-    if (result.status === 401) return "401: API-Key fehlt oder ist falsch.";
-    if (result.status === 404) return "404: nicht gefunden.";
-    if (result.status === 422) return "422: Body passt nicht zu MonitorReq. " + (result.text || "");
-    return `${result.status}: ${result.text || result.statusText}`;
-  }
-
-  // ---------- Formatierung ----------
-
-  function formatNumber(value) {
-    if (typeof value !== "number") return String(value);
-    return Number.isInteger(value) ? String(value) : value.toFixed(2);
-  }
-
-  function formatUptime(totalSeconds) {
-    if (typeof totalSeconds !== "number") return "–";
-    const h = Math.floor(totalSeconds / 3600);
-    const m = Math.floor((totalSeconds % 3600) / 60);
-    const s = totalSeconds % 60;
-    return `${h}h ${m}m ${s}s`;
-  }
-
-  function isIsoDate(value) {
-    return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value);
-  }
-
-  function addStat(container, key, value) {
-    const box = document.createElement("div");
-    box.className = "stat";
-    const k = document.createElement("div");
-    k.className = "k";
-    k.textContent = key;
-    const v = document.createElement("div");
-    v.className = "v";
-    v.textContent = value;
-    box.append(k, v);
-    container.append(box);
-    return v;
   }
 
   // ---------- Status ----------
 
-  $("btnStatus").addEventListener("click", async () => {
-    const button = $("btnStatus");
-    button.disabled = true;
-    const result = await call("GET", "/status");
-    button.disabled = false;
-
-    setBadge($("statusBadge"), result);
-    showRaw($("statusRaw"), result);
-
-    const stats = $("statusStats");
-    stats.replaceChildren();
-    if (!result.ok || !result.data) {
-      addStat(stats, "Fehler", errorMessage(result));
-      return;
-    }
-
-    addStat(stats, "Uptime", formatUptime(result.data.uptime_sec));
-    const p = result.data.process;
-    if (p) {
-      addStat(stats, "PID", p.pid ?? "–");
-      addStat(stats, "Prozess", p.name ?? "–");
-      addStat(stats, "RAM", p.memory_mb != null ? formatNumber(p.memory_mb) + " MB" : "–");
-      addStat(stats, "CPU", p.cpu_usage_percent != null ? formatNumber(p.cpu_usage_percent) + " %" : "–");
-    } else {
-      addStat(stats, "Prozess", "keine Daten");
-    }
+  $("btnStatus").onclick = () => run(async () => {
+    const s = await api("GET", "/status");
+    const p = s.process ?? {};
+    const h = Math.floor(s.uptime_sec / 3600);
+    const m = Math.floor((s.uptime_sec % 3600) / 60);
+    $("status").textContent =
+            `Uptime ${h}h ${m}m ${s.uptime_sec % 60}s · RAM ${p.memory_mb ?? "–"} MB · CPU ${p.cpu_usage_percent?.toFixed(1) ?? "–"} %`;
   });
 
-  // ---------- Monitor starten ----------
+  // ---------- Monitore ----------
 
-  function buildMonitorBody() {
-    const body = {
-      target: $("monTarget").value.trim(),
-      strategy: $("monStrategy").value,
-      interval_sec: Number($("monInterval").value)
-    };
-    $("monBody").value = JSON.stringify(body, null, 2);
+  let monitors = JSON.parse(localStorage.getItem("am.monitors") ?? "[]");
+  let selected = null;
+  let timer = null;
+
+  function saveMonitors() {
+    localStorage.setItem("am.monitors", JSON.stringify(monitors));
+    renderMonitors();
   }
 
-  ["monTarget", "monStrategy", "monInterval"].forEach((id) => {
-    $(id).addEventListener("input", buildMonitorBody);
-  });
-  buildMonitorBody();
+  function renderMonitors() {
+    const table = $("monitors");
+    table.replaceChildren();
+    for (const m of monitors) {
+      const tr = table.insertRow();
+      tr.insertCell().textContent = m.target;
+      const idCell = tr.insertCell();
+      idCell.textContent = m.id;
+      idCell.className = "muted";
 
-  $("btnMonitor").addEventListener("click", async () => {
-    const message = $("monMessage");
-    const bodyText = $("monBody").value;
+      const actions = tr.insertCell();
+      actions.className = "r";
+      actions.append(button("Verlauf", () => select(m)), " ", button("Stoppen", () => run(() => stop(m.id))));
+    }
+  }
 
+  function button(label, onClick) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.onclick = onClick;
+    return b;
+  }
+
+  $("startForm").onsubmit = (e) => {
+    e.preventDefault();
+    run(async () => {
+      const target = $("target").value.trim();
+      const res = await api("POST", "/monitor/start", {
+        target,
+        strategy: "icmp",
+        interval_sec: Number($("interval").value),
+      });
+      const m = { id: res.id, target };
+      monitors.unshift(m);
+      saveMonitors();
+      select(m);
+    });
+  };
+
+  async function stop(id) {
     try {
-      JSON.parse(bodyText);
-    } catch (err) {
-      message.textContent = "Der Request-Body ist kein gültiges JSON: " + err.message;
-      return;
+      await api("DELETE", `/monitor/stop/${id}`);
+    } catch (e) {
+      // 417: Server kennt den Monitor nicht mehr (z. B. nach einem Neustart) → trotzdem aus der Liste nehmen
+      if (e.status !== 417) throw e;
     }
-
-    const button = $("btnMonitor");
-    button.disabled = true;
-    const result = await call("POST", "/monitor", bodyText);
-    button.disabled = false;
-
-    setBadge($("monBadge"), result);
-    showRaw($("monRaw"), result);
-
-    if (result.ok && result.data && result.data.id) {
-      const id = result.data.id;
-      message.textContent = "Monitor gestartet, ID: " + id;
-      addKnownId(id);
-      $("histId").value = id;
-    } else {
-      message.textContent = errorMessage(result);
-    }
-  });
-
-  // ---------- Bekannte IDs ----------
-
-  function renderKnownIds() {
-    const list = $("knownIds");
-    list.replaceChildren();
-    for (const id of store.get("anymonitor.ids", [])) {
-      const option = document.createElement("option");
-      option.value = id;
-      list.append(option);
-    }
+    monitors = monitors.filter((m) => m.id !== id);
+    saveMonitors();
+    if (selected?.id === id) select(null);
   }
 
-  function addKnownId(id) {
-    const ids = store.get("anymonitor.ids", []).filter((x) => x !== id);
-    ids.unshift(id);
-    store.set("anymonitor.ids", ids.slice(0, 20));
-    renderKnownIds();
+  // ---------- Verlauf ----------
+
+  function select(monitor) {
+    selected = monitor;
+    clearInterval(timer);
+    $("historySection").hidden = !monitor;
+    if (!monitor) return;
+
+    $("historyTitle").textContent = `${monitor.target} · aktualisiert alle 5 s`;
+    $("history").replaceChildren();
+    run(loadHistory);
+    timer = setInterval(() => run(loadHistory), 5000);
   }
-
-  renderKnownIds();
-
-  // ---------- History ----------
 
   async function loadHistory() {
-    const id = $("histId").value.trim();
-    const message = $("histMessage");
+    if (!selected) return;
+    const { history } = await api("GET", `/monitor/history/${selected.id}`);
 
-    if (!id) {
-      message.textContent = "Bitte eine Monitor-ID eingeben.";
-      return;
+    const tbody = $("history");
+    tbody.replaceChildren();
+    for (const r of history.slice().reverse()) {
+      const tr = tbody.insertRow();
+      const online = r.online ?? r.received > 0;
+      const errors = (r.errors ?? [r.error]).filter(Boolean).join(", ");
+
+      cell(tr, new Date(r.at).toLocaleTimeString());
+      cell(tr, online ? "online" : "offline", online ? "ok" : "bad");
+      cell(tr, `${r.received}/${r.sent}`, "r");
+      cell(tr, `${Math.round(r.loss_percent)} %`, "r");
+      cell(tr, r.avg_rtt_ms != null ? `${r.avg_rtt_ms.toFixed(2)} ms` : "–", "r");
+      cell(tr, errors || "–", errors ? "" : "muted");
     }
-
-    const result = await call("GET", "/history/" + encodeURIComponent(id));
-    setBadge($("histBadge"), result);
-    showRaw($("histRaw"), result);
-
-    if (!result.ok) {
-      message.textContent = errorMessage(result);
-      renderHistory([]);
-      return;
-    }
-
-    const rows = Array.isArray(result.data)
-            ? result.data
-            : (result.data && Array.isArray(result.data.history) ? result.data.history : []);
-
-    message.textContent = rows.length
-            ? "Zuletzt aktualisiert: " + new Date().toLocaleTimeString()
-            : "Noch keine Ergebnisse. Der erste Check kann ein paar Sekunden dauern.";
-    renderHistory(rows);
   }
 
-  function renderHistory(rows) {
-    const table = $("histTable");
-    const stats = $("histStats");
-    table.replaceChildren();
-    stats.replaceChildren();
-
-    if (!rows.length) return;
-
-    // ---- Zusammenfassung ----
-    const newest = rows[rows.length - 1];
-    addStat(stats, "Ergebnisse", String(rows.length));
-
-    if (typeof newest.online === "boolean") {
-      const v = addStat(stats, "Aktuell", newest.online ? "online" : "offline");
-      v.className = "v " + (newest.online ? "true" : "false");
-    }
-
-    const losses = rows.map((r) => r.loss_percent).filter((x) => typeof x === "number");
-    if (losses.length) {
-      const avg = losses.reduce((a, b) => a + b, 0) / losses.length;
-      addStat(stats, "Ø Paketverlust", avg.toFixed(1) + " %");
-    }
-
-    const rtts = rows.map((r) => r.avg_rtt_ms).filter((x) => typeof x === "number");
-    if (rtts.length) {
-      const avg = rtts.reduce((a, b) => a + b, 0) / rtts.length;
-      addStat(stats, "Ø Antwortzeit", avg.toFixed(2) + " ms");
-    }
-
-    // ---- Tabelle, neueste zuerst ----
-    const keys = [...new Set(rows.flatMap((r) => Object.keys(r)))];
-
-    // Spalten, in denen nur Zahlen (oder leere Werte) stehen, werden rechtsbündig
-    const numericKeys = new Set(keys.filter((key) =>
-            rows.some((r) => typeof r[key] === "number") &&
-            rows.every((r) => r[key] === null || r[key] === undefined || typeof r[key] === "number")
-    ));
-
-    const thead = document.createElement("thead");
-    const headRow = document.createElement("tr");
-    for (const key of keys) {
-      const th = document.createElement("th");
-      th.textContent = key;
-      if (numericKeys.has(key)) th.className = "num";
-      headRow.append(th);
-    }
-    thead.append(headRow);
-
-    const tbody = document.createElement("tbody");
-    for (const row of rows.slice().reverse()) {
-      const tr = document.createElement("tr");
-      for (const key of keys) {
-        tr.append(formatCell(row[key], numericKeys.has(key)));
-      }
-      tbody.append(tr);
-    }
-
-    table.append(thead, tbody);
+  function cell(tr, text, className) {
+    const td = tr.insertCell();
+    td.textContent = text;
+    if (className) td.className = className;
   }
 
-  function formatCell(value, numericColumn) {
-    const td = document.createElement("td");
-    if (numericColumn) td.classList.add("num");
-
-    if (value === null || value === undefined) {
-      td.textContent = "–";
-      td.classList.add("null");
-    } else if (typeof value === "boolean") {
-      td.textContent = value ? "ja" : "nein";
-      td.classList.add(String(value));
-    } else if (typeof value === "number") {
-      td.textContent = formatNumber(value);
-    } else if (isIsoDate(value)) {
-      td.textContent = new Date(value).toLocaleString();
-    } else if (typeof value === "object") {
-      td.textContent = JSON.stringify(value);
-    } else {
-      td.textContent = String(value);
-    }
-    return td;
-  }
-
-  let autoTimer = null;
-
-  $("btnHistory").addEventListener("click", loadHistory);
-
-  $("histAuto").addEventListener("change", () => {
-    if (autoTimer) {
-      clearInterval(autoTimer);
-      autoTimer = null;
-    }
-    if ($("histAuto").checked) {
-      loadHistory();
-      autoTimer = setInterval(loadHistory, 5000);
-    }
-  });
+  renderMonitors();
 </script>
 
 </body>

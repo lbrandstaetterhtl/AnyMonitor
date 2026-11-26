@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use anyhow::bail;
 use axum::handler::HandlerWithoutStateExt;
+use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use helpers::monitor::MonitorEntry;
@@ -25,6 +26,7 @@ async fn main() -> anyhow::Result<()> {
     let config_arc = Arc::new(config.clone());
     let logger_arc = Arc::new(Logger::new(config.log_file, LoggerMode::Info));
     let monitor_entries: Arc<Mutex<HashMap<Uuid, MonitorEntry>>> = Arc::new(Mutex::new(HashMap::new()));
+    let running_loops = Arc::new(Mutex::new(Vec::new()));
     let shutdown = CancellationToken::new();
     let state = AppState {
         logger: logger_arc,
@@ -32,7 +34,8 @@ async fn main() -> anyhow::Result<()> {
         started_at: Instant::now(),
         system: Arc::new(Mutex::new(System::new()?)),
         monitor_entries,
-        shutdown
+        shutdown,
+        running_loops
     };
 
     if config.api_key.is_empty() {
@@ -48,7 +51,7 @@ async fn main() -> anyhow::Result<()> {
     println!("Listening on: {}", socket_addr);
     state.logger.set_mode(LoggerMode::Info);
     let _ = state.logger.log("Server started successfully!");
-    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>()).with_graceful_shutdown(shutdown_signal()).await?;
+    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>()).with_graceful_shutdown(shutdown_signal(state.clone())).await?;
 
     state.logger.set_mode(LoggerMode::Info);
     let _ = state.logger.log("Server is shut down!");
@@ -57,7 +60,8 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn shutdown_signal() {
+async fn shutdown_signal(state: AppState) {
+
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
@@ -84,4 +88,7 @@ async fn shutdown_signal() {
         _ = ctrl_c => {},
         _ = terminate => {},
     }
+
+    let _ = state.logger.log(format!("shutdown signal received, stopping running loops | count: {}", state.running_loops.lock().unwrap().len()).as_str());
+    state.shutdown.cancel();
 }

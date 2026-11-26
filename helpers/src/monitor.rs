@@ -5,9 +5,11 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
+use tokio::time::MissedTickBehavior;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum MonitorStrat {
     Icmp,
@@ -16,12 +18,12 @@ pub enum MonitorStrat {
     Heartbeat
 }
 
+#[derive(Clone)]
 pub struct MonitorEntry {
     pub ip: Ipv4Addr,
     pub ip_requester: Ipv4Addr,
     pub interval_sec: u64,
     pub history: VecDeque<PingResult>,
-    pub handle: JoinHandle<()>,
     pub events: broadcast::Sender<PingResult>,
     pub strategy: MonitorStrat
 }
