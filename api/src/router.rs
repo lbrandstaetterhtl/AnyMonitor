@@ -119,7 +119,7 @@ async fn get_entry_history(State(state): State<AppState>, headers: HeaderMap, Co
     require_key(key, State(state.clone()), addr, format!("/history/{}", id).as_str())?;
 
     state.logger.set_mode(LoggerMode::Info);
-    let _ = state.logger.log(format!("/monitor was called from {}", addr.ip()).as_str());
+    let _ = state.logger.log(format!("/hsitory/{} was called from {}", id, addr.ip()).as_str());
 
     let map = state.monitor_entries.lock().unwrap();
 
@@ -138,7 +138,7 @@ fn to_mb(bytes: u64) -> f64 {
 fn require_key(key: &str, State(state): State<AppState>, addr: SocketAddr, path: &str) -> Result<(), StatusCode>{
     if !key.eq(state.config.api_key.as_str()) {
         state.logger.set_mode(LoggerMode::Warn);
-        let _ = state.logger.log(format!("Unauthorized request to /{} from {}", path, addr.ip()).as_str());
+        let _ = state.logger.log(format!("Blocked unauthorized request to {} from {}", path, addr.ip()).as_str());
         Err(StatusCode::UNAUTHORIZED)
     }
     else {
