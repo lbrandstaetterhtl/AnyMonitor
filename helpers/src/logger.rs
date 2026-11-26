@@ -1,12 +1,17 @@
 ﻿use std::fs;
+use std::fs::{File, OpenOptions};
+use std::io::BufWriter;
 use std::path::{Path, PathBuf};
+use std::sync::RwLock;
+use std::io::Write;
 use chrono::TimeZone;
 
 pub struct Logger {
     pub path: PathBuf,
-    pub mode: LoggerMode
+    pub mode: RwLock<LoggerMode>
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LoggerMode {
     Debug,
     Warn,
@@ -28,7 +33,7 @@ impl LoggerMode {
 
 impl Logger {
     pub fn get_mode_as_str(&self) -> Result<&str, String> {
-        match self.mode {
+        match *self.mode.write().unwrap() {
             LoggerMode::Debug => Ok("DEBUG"),
             LoggerMode::Warn => Ok("WARN"),
             LoggerMode::Info => Ok("INFO"),
@@ -50,14 +55,22 @@ impl Logger {
             }
         }
 
-        fs::write(file_path, message).map_err(|e| e.to_string())
+        if !file_path.exists() {
+            File::create(file_path).map_err(|e| e.to_string())?;
+        }
+
+        let mut file = OpenOptions::new().write(true).append(true).open(file_path).map_err(|e| e.to_string())?;
+
+        writeln!(file, "{message}").map_err(|e| e.to_string())?;
+
+        Ok(())
     }
 
     pub fn new(path: PathBuf, mode: LoggerMode) -> Self{
-        Logger {path, mode}
+        Logger {path, mode: RwLock::new(mode)}
     }
 
-    pub fn set_mode(&mut self, mode: LoggerMode) {
-        self.mode = mode;
+    pub fn set_mode(&self, mode: LoggerMode) {
+        *self.mode.write().unwrap() = mode;
     }
 }

@@ -1,34 +1,87 @@
-pub mod routes;
+pub mod router;
 mod app_state;
+pub mod requests;
 
+use std::collections::{HashMap, VecDeque};
 use sysinfo::System;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use axum::{Error, Router};
+use axum::{Error, Router, ServiceExt};
 use axum::routing::{any, get};
 use helpers::{logger::Logger, config::Config};
 use helpers::logger::LoggerMode;
 use crate::app_state::AppState;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use anyhow::bail;
+use axum::handler::HandlerWithoutStateExt;
+use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
+use helpers::monitor::MonitorEntry;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let config = Config::load().map_err(anyhow::Error::msg)?;
+
     let config_arc = Arc::new(config.clone());
     let logger_arc = Arc::new(Logger::new(config.log_file, LoggerMode::Info));
-    let state = AppState { logger: logger_arc, config: config_arc, started_at: Instant::now(), system: Arc::new(Mutex::new(System::new()?)) };
+    let monitor_entries: Arc<Mutex<HashMap<Uuid, MonitorEntry>>> = Arc::new(Mutex::new(HashMap::new()));
+    let shutdown = CancellationToken::new();
+    let state = AppState {
+        logger: logger_arc,
+        config: config_arc,
+        started_at: Instant::now(),
+        system: Arc::new(Mutex::new(System::new()?)),
+        monitor_entries,
+        shutdown
+    };
 
-    let router = Router::new()
-        .route("/", get(routes::root))
-        .route("/status", get(routes::status))
-        .with_state(state);
+    if config.api_key.is_empty() {
+        state.logger.set_mode(LoggerMode::Warn);
+        let _ = state.logger.log("api key is empty in config");
+    }
+
+    let router = router::get_router()
+        .with_state(state.clone());
 
     let socket_addr = SocketAddr::new(IpAddr::V4(config.address), config.port);
     let listener = tokio::net::TcpListener::bind(socket_addr).await?;
     println!("Listening on: {}", socket_addr);
-    axum::serve(listener, router).await?;
+    state.logger.set_mode(LoggerMode::Info);
+    let _ = state.logger.log("Server started successfully!");
+    axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>()).with_graceful_shutdown(shutdown_signal()).await?;
 
+    state.logger.set_mode(LoggerMode::Info);
+    let _ = state.logger.log("Server is shut down!");
+    state.shutdown.cancel();
+    
     Ok(())
 }
 
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Strg+C-Handler couldn't register");
+    };
 
+    #[cfg(windows)]
+    let terminate = async {
+        tokio::signal::windows::ctrl_close()
+            .expect("Close-Handler couldn't register")
+            .recv()
+            .await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("SIGTERM-Handler couldn't register")
+            .recv()
+            .await;
+    };
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+}
