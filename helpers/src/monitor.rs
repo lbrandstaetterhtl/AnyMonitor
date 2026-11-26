@@ -18,10 +18,12 @@ pub enum MonitorStrat {
 
 pub struct MonitorEntry {
     pub ip: Ipv4Addr,
+    pub ip_requester: Ipv4Addr,
     pub interval_sec: u64,
     pub history: VecDeque<PingResult>,
     pub handle: JoinHandle<()>,
-    pub events: broadcast::Sender<PingResult>
+    pub events: broadcast::Sender<PingResult>,
+    pub strategy: MonitorStrat
 }
 
 #[derive(Debug, Clone, Serialize)]

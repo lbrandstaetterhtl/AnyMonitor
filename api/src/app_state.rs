@@ -13,6 +13,7 @@ use helpers::logger::Logger;
 use helpers::monitor::{MonitorEntry, PingResult};
 use tokio_util::sync::CancellationToken;
 use crate::router;
+use helpers::monitor::MonitorStrat;
 
 
 const HISTORY_LIMIT: usize = 100;
@@ -27,7 +28,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn start_icmp_monitor(&self, target: Ipv4Addr, interval_sec: u64) -> Uuid {
+    pub fn start_icmp_monitor(&self, target: Ipv4Addr, requester: Ipv4Addr, interval_sec: u64) -> Uuid {
         let id = Uuid::new_v4();
 
         let (events, _) = broadcast::channel(16);
@@ -36,10 +37,12 @@ impl AppState {
         let handle = tokio::spawn(router::icmp_loop(id, target, interval_sec, self.clone()));
         map.insert(id, MonitorEntry {
             ip: target,
+            ip_requester: requester,
             interval_sec,
             history: VecDeque::new(),
             handle,
-            events
+            events,
+            strategy: MonitorStrat::Icmp
         });
         id
     }

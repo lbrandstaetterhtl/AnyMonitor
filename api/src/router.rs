@@ -1,5 +1,5 @@
 ﻿use std::arch::x86_64::_mm_and_pd;
-use std::net::{Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::time::Duration;
 use axum::extract::{ConnectInfo, Path, State};
 use axum::{Json, Router};
@@ -18,9 +18,9 @@ use crate::app_state::AppState;
 use crate::requests::{MonitorReq};
 use crate::router;
 
-async fn root(State(state): State<AppState>) -> Json<Value> {
+async fn root(State(state): State<AppState>, ConnectInfo(addr): ConnectInfo<SocketAddr>) -> Json<Value> {
     state.logger.set_mode(LoggerMode::Info);
-    let _ = state.logger.log("root was called");
+    let _ = state.logger.log(format!("/ was called from {}", addr.ip()).as_str());
     Json(json!({ "message": "OK" }))
 }
 
@@ -37,18 +37,18 @@ pub fn get_router() -> Router<AppState> {
         .route("/", get(root))
         .route("/status", get(status))
         .route("/monitor", post(monitor))
-        .route("/history/{id}", get(get_monitor_entry))
+        .route("/history/{id}", get(get_entry_history))
         .route("/ui", get(ui))
 }
 
 async fn status(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(addr): ConnectInfo<SocketAddr>) -> Result<Json<Value>, StatusCode> {
     let key = headers.get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or_else(|| "");
 
-    require_key(key, State(state.clone()), addr)?;
+    require_key(key, State(state.clone()), addr, "/status")?;
 
     let uptime_sec = state.started_at.elapsed().as_secs();
     state.logger.set_mode(LoggerMode::Info);
-    let _ = state.logger.log("status was called");
+    let _ = state.logger.log(format!("/status was called from {}", addr.ip()).as_str());
 
     let mut sys = state.system.lock().unwrap();
     sys.refresh_memory();
@@ -83,19 +83,24 @@ async fn status(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(a
 }
 
 async fn monitor(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(addr): ConnectInfo<SocketAddr>, Json(req): Json<MonitorReq>) -> Result<Json<Value>, StatusCode> {
-    state.logger.set_mode(LoggerMode::Info);
-    let _ = state.logger.log("/monitor was called");
     let key = headers.get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or_else(|| "");
 
-    require_key(key, State(state.clone()), addr)?;
+    require_key(key, State(state.clone()), addr, "/monitor")?;
+    state.logger.set_mode(LoggerMode::Info);
+    let _ = state.logger.log(format!("/monitor was called from {}", addr.ip()).as_str());
+
 
     let strat = req.strategy;
     let target = req.target;
     let interval = req.interval_sec;
+    let requester_ipv4 = match addr.ip() {
+        IpAddr::V4(ip) => ip,
+        IpAddr::V6(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR)
+    };
 
     match strat {
         MonitorStrat::Icmp => {
-            let id = state.start_icmp_monitor(target, interval);
+            let id = state.start_icmp_monitor(target, requester_ipv4, interval);
 
             state.logger.set_mode(LoggerMode::Info);
             let _ = state.logger.log(format!("monitor with id '{}' started successfully", id).as_str());
@@ -108,10 +113,13 @@ async fn monitor(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(
     }
 }
 
-async fn get_monitor_entry(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(addr): ConnectInfo<SocketAddr>, Path(id): Path<Uuid>) -> Result<Json<Value>, StatusCode> {
+async fn get_entry_history(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(addr): ConnectInfo<SocketAddr>, Path(id): Path<Uuid>) -> Result<Json<Value>, StatusCode> {
     let key = headers.get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or_else(|| "");
 
-    require_key(key, State(state.clone()), addr)?;
+    require_key(key, State(state.clone()), addr, format!("/history/{}", id).as_str())?;
+
+    state.logger.set_mode(LoggerMode::Info);
+    let _ = state.logger.log(format!("/monitor was called from {}", addr.ip()).as_str());
 
     let map = state.monitor_entries.lock().unwrap();
 
@@ -127,10 +135,10 @@ fn to_mb(bytes: u64) -> f64 {
     (mb * 10.0).round() / 10.0
 }
 
-fn require_key(key: &str, State(state): State<AppState>, addr: SocketAddr) -> Result<(), StatusCode>{
+fn require_key(key: &str, State(state): State<AppState>, addr: SocketAddr, path: &str) -> Result<(), StatusCode>{
     if !key.eq(state.config.api_key.as_str()) {
         state.logger.set_mode(LoggerMode::Warn);
-        let _ = state.logger.log(format!("Unauthorized request to /status from {}", addr.ip()).as_str());
+        let _ = state.logger.log(format!("Unauthorized request to /{} from {}", path, addr.ip()).as_str());
         Err(StatusCode::UNAUTHORIZED)
     }
     else {
