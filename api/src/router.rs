@@ -170,6 +170,6 @@ async fn stop_monitor(State(state): State<AppState>, ConnectInfo(addr): ConnectI
             let _ = state.logger.log(format!("monitor with id {} successfully stopped", id).as_str());
             Ok(Json(json!({"message": format!("monitor with id {} successfully stopped", id).as_str()})))
         },
-        Err(_) => Err(StatusCode::EXPECTATION_FAILED)
+        Err(_) => Err(StatusCode::BAD_REQUEST)
     }
 }
