@@ -1,11 +1,8 @@
 ﻿use std::fs;
-use std::fs::{File, OpenOptions};
-use std::io::BufWriter;
-use std::path::{Path, PathBuf};
+use std::fs::{OpenOptions};
+use std::path::{PathBuf};
 use std::sync::RwLock;
 use std::io::Write;
-use chrono::TimeZone;
-
 pub struct Logger {
     pub path: PathBuf,
     pub mode: RwLock<LoggerMode>
@@ -32,38 +29,37 @@ impl LoggerMode {
 }
 
 impl Logger {
-    pub fn get_mode_as_str(&self) -> Result<&str, String> {
+    pub fn get_mode_as_str(&self) -> &str {
         match *self.mode.write().unwrap() {
-            LoggerMode::Debug => Ok("DEBUG"),
-            LoggerMode::Warn => Ok("WARN"),
-            LoggerMode::Info => Ok("INFO"),
-            LoggerMode::Error => Ok("ERROR"),
+            LoggerMode::Debug => "DEBUG",
+            LoggerMode::Warn => "WARN",
+            LoggerMode::Info => "INFO",
+            LoggerMode::Error => "ERROR",
         }
     }
 
-    pub fn log(&self, message: &str) -> Result<(), String> {
-        let file_path = &self.path;
-        let mode_str = self.get_mode_as_str()?;
-        let date = chrono::Local::now();
-        let date_formatted = date.format("%Y-%m-%d %H:%M:%S");
+    pub fn log(&self, message: &str) {
+        if let Err(e) = self.write_line(message) {
+            eprintln!("logger: could not write to {}: {e}", self.path.display());
+        }
+    }
 
-        let message = format!("{} | [{}] {}", date_formatted, mode_str, message);
+    fn write_line(&self, message: &str) -> std::io::Result<()> {
+        let date = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+        let line = format!("{date} | [{}] {message}", self.get_mode_as_str());
 
-        if let Some(dir) = file_path.parent() {
+        if let Some(dir) = self.path.parent() {
             if !dir.as_os_str().is_empty() {
-                fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+                fs::create_dir_all(dir)?;
             }
         }
 
-        if !file_path.exists() {
-            File::create(file_path).map_err(|e| e.to_string())?;
-        }
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
 
-        let mut file = OpenOptions::new().write(true).append(true).open(file_path).map_err(|e| e.to_string())?;
-
-        writeln!(file, "{message}").map_err(|e| e.to_string())?;
-
-        Ok(())
+        writeln!(file, "{line}")
     }
 
     pub fn new(path: PathBuf, mode: LoggerMode) -> Self{

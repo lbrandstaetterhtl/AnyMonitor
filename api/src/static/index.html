@@ -6,7 +6,7 @@
   <title>AnyMonitor</title>
   <style>
     :root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; }
-    body { max-width: 900px; margin: 0 auto; padding: 16px; }
+    body { max-width: 960px; margin: 0 auto; padding: 16px; }
     header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
     h1 { font-size: 20px; margin: 0; }
     h2 { font-size: 16px; margin: 0 0 10px; }
@@ -16,11 +16,13 @@
     table { width: 100%; border-collapse: collapse; margin-top: 10px; font-variant-numeric: tabular-nums; }
     th, td { padding: 5px 8px; border-bottom: 1px solid #8883; text-align: left; white-space: nowrap; }
     th { font-weight: 600; font-size: 12px; }
+    tr.selected { background: #8882; }
     .r { text-align: right; }
     .ok { color: #1f8a4c; font-weight: 600; }
     .bad { color: #d0453c; font-weight: 600; }
     .muted { color: GrayText; }
     #msg { color: #d0453c; min-height: 1.5em; margin: 8px 0 0; }
+    td.wrap { white-space: normal; max-width: 360px; overflow-wrap: anywhere; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -38,13 +40,18 @@
 </section>
 
 <section>
-  <h2>Monitore</h2>
+  <h2>Monitore <span class="muted">· aktualisiert alle 5 s</span></h2>
   <form id="startForm">
     <input id="target" placeholder="Ziel-IP" value="127.0.0.1" required>
     <label>alle <input id="interval" type="number" min="1" value="5" style="width: 60px"> s</label>
     <button>ICMP-Monitor starten</button>
   </form>
-  <table id="monitors"></table>
+  <table>
+    <thead>
+    <tr><th>Ziel</th><th class="r">Intervall</th><th>Gestartet von</th><th class="r">Ergebnisse</th><th>Zuletzt</th><th></th></tr>
+    </thead>
+    <tbody id="monitors"></tbody>
+  </table>
 </section>
 
 <section id="historySection" hidden>
@@ -57,13 +64,31 @@
   </table>
 </section>
 
+<section>
+  <h2>Fehler testen</h2>
+  <p class="muted">
+    Schickt absichtlich fehlerhafte Requests. „Erwartet“ ist der Status, den eine saubere API liefern sollte.
+    Die Tests verwenden den API-Key von oben, außer sie testen den Key selbst.
+  </p>
+  <button id="btnRunAll">Alle ausführen</button>
+  <table>
+    <thead>
+    <tr><th>Szenario</th><th class="r">Erwartet</th><th class="r">Erhalten</th><th>Antwort</th><th></th></tr>
+    </thead>
+    <tbody id="tests"></tbody>
+  </table>
+</section>
+
 <script>
   const $ = (id) => document.getElementById(id);
 
   // ---------- API ----------
 
   $("key").value = localStorage.getItem("am.key") ?? "";
-  $("key").onchange = () => localStorage.setItem("am.key", $("key").value);
+  $("key").onchange = () => {
+    localStorage.setItem("am.key", $("key").value);
+    run(refresh);
+  };
 
   async function api(method, path, body) {
     const headers = { "x-api-key": $("key").value };
@@ -89,6 +114,26 @@
     }
   }
 
+  // ---------- Helfer ----------
+
+  function cell(tr, text, className) {
+    const td = tr.insertCell();
+    td.textContent = text;
+    if (className) td.className = className;
+    return td;
+  }
+
+  function button(label, onClick) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.onclick = onClick;
+    return b;
+  }
+
+  function isOnline(result) {
+    return result.online ?? result.received > 0;
+  }
+
   // ---------- Status ----------
 
   $("btnStatus").onclick = () => run(async () => {
@@ -102,51 +147,72 @@
 
   // ---------- Monitore ----------
 
-  let monitors = JSON.parse(localStorage.getItem("am.monitors") ?? "[]");
-  let selected = null;
-  let timer = null;
+  let monitors = [];
+  let selectedId = null;
 
-  function saveMonitors() {
-    localStorage.setItem("am.monitors", JSON.stringify(monitors));
+  async function refresh() {
+    if (!$("key").value) return;
+
+    const { infos } = await api("GET", "/monitor/info/all");
+    monitors = infos;
     renderMonitors();
-  }
 
-  function renderMonitors() {
-    const table = $("monitors");
-    table.replaceChildren();
-    for (const m of monitors) {
-      const tr = table.insertRow();
-      tr.insertCell().textContent = m.target;
-      const idCell = tr.insertCell();
-      idCell.textContent = m.id;
-      idCell.className = "muted";
-
-      const actions = tr.insertCell();
-      actions.className = "r";
-      actions.append(button("Verlauf", () => select(m)), " ", button("Stoppen", () => run(() => stop(m.id))));
+    if (selectedId) {
+      if (monitors.some((m) => m.id === selectedId)) {
+        await loadHistory();
+      } else {
+        select(null);
+      }
     }
   }
 
-  function button(label, onClick) {
-    const b = document.createElement("button");
-    b.textContent = label;
-    b.onclick = onClick;
-    return b;
+  function renderMonitors() {
+    const tbody = $("monitors");
+    tbody.replaceChildren();
+
+    if (!monitors.length) {
+      const tr = tbody.insertRow();
+      const td = cell(tr, "Keine Monitore aktiv.", "muted");
+      td.colSpan = 6;
+      return;
+    }
+
+    for (const m of monitors) {
+      const tr = tbody.insertRow();
+      if (m.id === selectedId) tr.className = "selected";
+
+      cell(tr, m.ip);
+      cell(tr, `${m.interval_sec} s`, "r");
+      cell(tr, m.ip_requester ?? "–", "muted");
+      cell(tr, m.results ?? "–", "r");
+
+      if (m.latest) {
+        const online = isOnline(m.latest);
+        cell(tr, online ? "online" : "offline", online ? "ok" : "bad");
+      } else {
+        cell(tr, "–", "muted");
+      }
+
+      const actions = cell(tr, "", "r");
+      actions.append(
+              button("Verlauf", () => select(m.id)),
+              " ",
+              button("Stoppen", () => run(() => stop(m.id))),
+      );
+    }
   }
 
   $("startForm").onsubmit = (e) => {
     e.preventDefault();
     run(async () => {
-      const target = $("target").value.trim();
       const res = await api("POST", "/monitor/start", {
-        target,
+        target: $("target").value.trim(),
         strategy: "icmp",
         interval_sec: Number($("interval").value),
       });
-      const m = { id: res.id, target };
-      monitors.unshift(m);
-      saveMonitors();
-      select(m);
+      selectedId = res.id;
+      await refresh();
+      select(res.id);
     });
   };
 
@@ -154,37 +220,43 @@
     try {
       await api("DELETE", `/monitor/stop/${id}`);
     } catch (e) {
-      // 417: Server kennt den Monitor nicht mehr (z. B. nach einem Neustart) → trotzdem aus der Liste nehmen
-      if (e.status !== 417) throw e;
+      // 400: Server kennt den Monitor nicht (mehr) → einfach Liste neu laden
+      if (e.status !== 400) throw e;
     }
-    monitors = monitors.filter((m) => m.id !== id);
-    saveMonitors();
-    if (selected?.id === id) select(null);
+    if (selectedId === id) select(null);
+    await refresh();
   }
 
   // ---------- Verlauf ----------
 
-  function select(monitor) {
-    selected = monitor;
-    clearInterval(timer);
-    $("historySection").hidden = !monitor;
-    if (!monitor) return;
+  function select(id) {
+    selectedId = id;
+    $("historySection").hidden = !id;
+    renderMonitors();
+    if (!id) return;
 
-    $("historyTitle").textContent = `${monitor.target} · aktualisiert alle 5 s`;
+    const m = monitors.find((x) => x.id === id);
+    $("historyTitle").textContent = m ? `${m.ip} · alle ${m.interval_sec} s` : id;
     $("history").replaceChildren();
     run(loadHistory);
-    timer = setInterval(() => run(loadHistory), 5000);
   }
 
   async function loadHistory() {
-    if (!selected) return;
-    const { history } = await api("GET", `/monitor/history/${selected.id}`);
+    if (!selectedId) return;
+    const { history } = await api("GET", `/monitor/history/${selectedId}`);
 
     const tbody = $("history");
     tbody.replaceChildren();
+
+    if (!history.length) {
+      const td = cell(tbody.insertRow(), "Noch keine Ergebnisse.", "muted");
+      td.colSpan = 6;
+      return;
+    }
+
     for (const r of history.slice().reverse()) {
       const tr = tbody.insertRow();
-      const online = r.online ?? r.received > 0;
+      const online = isOnline(r);
       const errors = (r.errors ?? [r.error]).filter(Boolean).join(", ");
 
       cell(tr, new Date(r.at).toLocaleTimeString());
@@ -196,13 +268,85 @@
     }
   }
 
-  function cell(tr, text, className) {
-    const td = tr.insertCell();
-    td.textContent = text;
-    if (className) td.className = className;
+  // ---------- Fehler testen ----------
+
+  const UNKNOWN_ID = "00000000-0000-4000-8000-000000000000";
+
+  // Request ohne die Komfortfunktionen von api(): eigener Key, eigener Body, eigener Content-Type
+  async function raw(method, path, { key = $("key").value, body, contentType = "application/json" } = {}) {
+    const headers = {};
+    if (key !== null) headers["x-api-key"] = key;
+    if (body !== undefined) headers["Content-Type"] = contentType;
+
+    try {
+      const res = await fetch(path, { method, headers, body });
+      return { status: res.status, text: await res.text() };
+    } catch {
+      return { status: 0, text: "Keine Antwort: Verbindung abgebrochen (z. B. durch panic! im Handler)." };
+    }
   }
 
-  renderMonitors();
+  const startBody = (overrides) =>
+          JSON.stringify({ target: "127.0.0.1", strategy: "icmp", interval_sec: 5, ...overrides });
+
+  const scenarios = [
+    { name: "Falscher API-Key",                 expect: 401, run: () => raw("GET", "/status", { key: "falsch" }) },
+    { name: "Kein API-Key",                     expect: 401, run: () => raw("GET", "/status", { key: null }) },
+    { name: "Unbekannte ID (History)",          expect: 404, run: () => raw("GET", `/monitor/history/${UNKNOWN_ID}`) },
+    { name: "Unbekannte ID (Info)",             expect: 404, run: () => raw("GET", `/monitor/info/${UNKNOWN_ID}`) },
+    { name: "Unbekannte ID stoppen",            expect: 404, run: () => raw("DELETE", `/monitor/stop/${UNKNOWN_ID}`) },
+    { name: "ID ist keine UUID",                expect: 400, run: () => raw("GET", "/monitor/history/abc") },
+    { name: "Body ist kein JSON",               expect: 400, run: () => raw("POST", "/monitor/start", { body: "kein json" }) },
+    { name: "Falscher Content-Type",            expect: 415, run: () => raw("POST", "/monitor/start", { body: startBody(), contentType: "text/plain" }) },
+    { name: "Pflichtfeld fehlt",                expect: 422, run: () => raw("POST", "/monitor/start", { body: JSON.stringify({ target: "127.0.0.1" }) }) },
+    { name: "Ungültige IP",                     expect: 422, run: () => raw("POST", "/monitor/start", { body: startBody({ target: "999.1.1.1" }) }) },
+    { name: "Unbekannte Strategie",             expect: 422, run: () => raw("POST", "/monitor/start", { body: startBody({ strategy: "Foo" }) }) },
+    { name: "Intervall 0",                      expect: 400, run: () => raw("POST", "/monitor/start", { body: startBody({ interval_sec: 0 }) }) },
+    { name: "Strategie nicht umgesetzt (Tcp)",  expect: 501, run: () => raw("POST", "/monitor/start", { body: startBody({ strategy: { tcp: { port: 80 } } }) }) },
+    { name: "Falscher Key + kaputter Body",     expect: 401, run: () => raw("POST", "/monitor/start", { key: "falsch", body: "kein json" }) },
+    { name: "Unbekannte Route",                 expect: 404, run: () => raw("GET", "/gibt-es-nicht") },
+    { name: "Falsche Methode",                  expect: 405, run: () => raw("GET", "/monitor/start") },
+  ];
+
+  function renderTests() {
+    const tbody = $("tests");
+    for (const s of scenarios) {
+      const tr = tbody.insertRow();
+      cell(tr, s.name);
+      cell(tr, String(s.expect), "r");
+      s.got = cell(tr, "–", "r muted");
+      s.text = cell(tr, "", "wrap muted");
+      cell(tr, "", "r").append(button("Ausführen", () => runTest(s)));
+    }
+  }
+
+  async function runTest(s) {
+    s.got.textContent = "…";
+    s.got.className = "r muted";
+
+    const res = await s.run();
+    const pass = res.status === s.expect;
+
+    s.got.textContent = `${res.status === 0 ? "keine" : res.status} ${pass ? "✓" : "✗"}`;
+    s.got.className = "r " + (pass ? "ok" : "bad");
+    s.text.textContent = res.text || "(leer)";
+  }
+
+  $("btnRunAll").onclick = async () => {
+    $("btnRunAll").disabled = true;
+    for (const s of scenarios) {
+      await runTest(s);
+    }
+    $("btnRunAll").disabled = false;
+    run(refresh);
+  };
+
+  renderTests();
+
+  // ---------- Start ----------
+
+  run(refresh);
+  setInterval(() => run(refresh), 5000);
 </script>
 
 </body>

@@ -4,9 +4,6 @@ use std::time::Duration;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
-use tokio::task::JoinHandle;
-use tokio::time::MissedTickBehavior;
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -28,7 +25,7 @@ pub struct MonitorEntry {
     pub strategy: MonitorStrat
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PingResult {
     pub at: DateTime<Utc>,
     pub sent: u32,
@@ -36,6 +33,31 @@ pub struct PingResult {
     pub loss_percent: f32,
     pub avg_rtt_ms: Option<f64>,
     pub errors: Vec<Option<String>>,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct MonitorInfo {
+    pub id: Uuid,
+    pub ip: Ipv4Addr,
+    pub ip_requester: Ipv4Addr,
+    pub interval_sec: u64,
+    pub strategy: MonitorStrat,
+    pub results: usize,
+    pub latest: Option<PingResult>,
+}
+
+impl MonitorInfo {
+    pub fn from_entry(id: Uuid, entry: &MonitorEntry) -> Self {
+        Self {
+            id,
+            ip: entry.ip,
+            ip_requester: entry.ip_requester,
+            interval_sec: entry.interval_sec,
+            strategy: entry.strategy.clone(),
+            results: entry.history.len(),
+            latest: entry.history.back().cloned(),
+        }
+    }
 }
 
 const PING_PER_CHECK: u32 = 3;

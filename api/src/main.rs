@@ -1,27 +1,23 @@
 pub mod router;
 mod app_state;
 pub mod requests;
+pub mod errors;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap};
 use sysinfo::System;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use axum::{Error, Router, ServiceExt};
-use axum::routing::{any, get};
+use std::net::{IpAddr, SocketAddr};
 use helpers::{logger::Logger, config::Config};
 use helpers::logger::LoggerMode;
 use crate::app_state::AppState;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use anyhow::bail;
-use axum::handler::HandlerWithoutStateExt;
-use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 use helpers::monitor::MonitorEntry;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let config = Config::load().map_err(anyhow::Error::msg)?;
+    let config = Config::load().expect("Couldn't load config, server didn't start");
 
     let config_arc = Arc::new(config.clone());
     let logger_arc = Arc::new(Logger::new(config.log_file, LoggerMode::Info));

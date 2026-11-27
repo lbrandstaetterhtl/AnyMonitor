@@ -3,19 +3,18 @@ use std::net::Ipv4Addr;
 use sysinfo::System;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use chrono::{DateTime, Utc};
-use serde::Serialize;
+use axum::http::StatusCode;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 use uuid::Uuid;
 use helpers::config::Config;
-use helpers::logger::Logger;
+use helpers::logger::{Logger};
 use helpers::monitor::{MonitorEntry, PingResult};
 use tokio_util::sync::CancellationToken;
 use helpers::monitor;
-use crate::router;
 use helpers::monitor::MonitorStrat;
+use crate::errors::{LogAndReturn, Errors};
 
 
 const HISTORY_LIMIT: usize = 100;
@@ -31,12 +30,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn start_icmp_monitor(&self, target: Ipv4Addr, requester: Ipv4Addr, interval_sec: u64) -> Uuid {
+    pub fn start_icmp_monitor(&self, target: Ipv4Addr, requester: Ipv4Addr, interval_sec: u64) -> Result<Uuid, StatusCode> {
         let id = Uuid::new_v4();
 
         let (events, _) = broadcast::channel(16);
 
-        let mut map = self.monitor_entries.lock().unwrap();
+        let mut map = self.monitor_entries.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let entry = MonitorEntry {
             ip: target,
             ip_requester: requester,
@@ -51,13 +50,24 @@ impl AppState {
         let ct = self.shutdown.child_token();
         let icmp_loop = Loop {id, handle, ct};
         
-        self.running_loops.lock().unwrap().push(icmp_loop);
+        self.running_loops.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.push(icmp_loop);
         
-        id
+        Ok(id)
+    }
+
+    pub fn get_entry(&self, id: Uuid) -> Result<MonitorEntry, Errors> {
+        let map = self.monitor_entries.lock().unwrap();
+
+        let Some(entry) = map.get(&id) else {
+            return Err(Errors::EntryNotFound {id});
+        };
+
+        Ok(entry.clone())
     }
 
     pub fn record_result(&self, id: Uuid, result: PingResult) {
         let mut map = self.monitor_entries.lock().unwrap();
+
         if let Some(entry) = map.get_mut(&id) {
             if entry.history.len() >= HISTORY_LIMIT {
                 entry.history.pop_front();
@@ -66,18 +76,30 @@ impl AppState {
             entry.history.push_back(result);
         }
     }
-    
-    pub fn stop_icmp_monitor(&self, id: Uuid) -> Result<(), String> {
+
+    pub fn get_loop_ct(&self, id: Uuid) -> Result<CancellationToken, Errors> {
+        let loops = self.running_loops.lock().unwrap();
+
+        let Some(running) = loops.iter().find(|l| l.id == id) else {
+            return Err(Errors::LoopNotFound {id});
+        };
+
+        Ok(running.ct.clone())
+    }
+
+    pub fn stop_monitor(&self, id: Uuid) -> Result<(), Errors> {
         let mut map = self.monitor_entries.lock().unwrap();
-        map.remove(&id);
-        
-        let mut running_loops = self.running_loops.lock().unwrap();
-        let icmp_loop = running_loops.iter().find(|l| l.id == id).ok_or(format!("Loop with id {} not found", id))?;
-        let index = running_loops.iter().position(|l| l.id == id).unwrap();
-        
-        icmp_loop.ct.cancel();
-        running_loops.remove(index);
-        
+        let mut loops = self.running_loops.lock().unwrap();
+
+        if map.remove(&id).is_none() {
+            return Err(Errors::EntryNotFound { id });
+        }
+
+        let Some(index) = loops.iter().position(|l| l.id == id) else {
+            return Err(Errors::LoopNotFound { id });
+        };
+
+        loops.remove(index).ct.cancel();
         Ok(())
     }
     
@@ -86,24 +108,17 @@ impl AppState {
 pub struct Loop {
     pub id: Uuid,
     pub ct: CancellationToken,
-    pub handle: JoinHandle<()>,
+    pub handle: JoinHandle<Result<(), StatusCode>>
 }
 impl Loop {
-    pub async fn icmp_loop(id: Uuid, state: AppState) {
+    pub async fn icmp_loop(id: Uuid, state: AppState) -> Result<(), StatusCode>{
         let (ip, interval, cancel) = {
-            let entries = state.monitor_entries.lock().unwrap();
-            let Some(entry) = entries.get(&id) else {
-                let _ = state.logger.log(&format!("monitor {id} not found, loop not started"));
-                return;
-            };
 
-            let loops = state.running_loops.lock().unwrap();
-            let Some(running) = loops.iter().find(|l| l.id == id) else {
-                let _ = state.logger.log(&format!("loop {id} not found, loop not started"));
-                return;
-            };
+            let entry = state.get_entry(id).log_and_return(&state.logger)?;
 
-            (entry.ip, entry.interval_sec, running.ct.clone())
+            let ct = state.get_loop_ct(id).log_and_return(&state.logger)?;
+
+            (entry.ip, entry.interval_sec, ct.clone())
         };
 
         let mut ticker = tokio::time::interval(Duration::from_secs(interval));
@@ -111,7 +126,7 @@ impl Loop {
 
         loop {
             tokio::select! {
-            _ = cancel.cancelled() => break,
+            _ = cancel.cancelled() => return Ok(()),
             _ = ticker.tick() => {
                 let result = monitor::full_icmp_check(ip).await;
                 state.record_result(id, result);
