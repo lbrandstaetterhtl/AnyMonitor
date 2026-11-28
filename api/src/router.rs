@@ -10,12 +10,13 @@ use reqwest::StatusCode;
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::net::{IpAddr, SocketAddr};
+use std::time::Duration;
 use sysinfo::ProcessesToUpdate;
 use uuid::Uuid;
 
 async fn root(State(state): State<AppState>, ConnectInfo(addr): ConnectInfo<SocketAddr>) -> Json<Value> {
     state.logger.set_mode(LoggerMode::Info);
-    let _ = state.logger.log(format!("/ was called from {}", addr.ip()).as_str());
+    let _ = state.logger.runtime_log(format!("/ was called from {}", addr.ip()).as_str());
     Json(json!({ "message": "OK" }))
 }
 
@@ -51,7 +52,7 @@ async fn status(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(a
 
     let uptime_sec = state.started_at.elapsed().as_secs();
     state.logger.set_mode(LoggerMode::Info);
-    state.logger.log(format!("/status was called from {}", addr.ip()).as_str());
+    state.logger.runtime_log(format!("/status was called from {}", addr.ip()).as_str());
 
     let mut sys = state.system.lock().unwrap();
     sys.refresh_memory();
@@ -77,7 +78,7 @@ async fn status(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(a
         ),
         None => format!("status: uptime={}s, process info unavailable", uptime_sec),
     };
-    let _ = state.logger.log(&message);
+    let _ = state.logger.runtime_log(&message);
 
     let loop_count = state.running_loops.lock().unwrap().len();
     Ok(Json(json!({
@@ -92,7 +93,7 @@ async fn monitor(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(
     require_key(key, State(state.clone()), addr, "/monitor/start".to_string()).log_and_return(&state.logger)?;
 
     state.logger.set_mode(LoggerMode::Info);
-    state.logger.log(format!("/monitor/start was called from {}", addr.ip()).as_str());
+    state.logger.runtime_log(format!("/monitor/start was called from {}", addr.ip()).as_str());
 
 
     let strat = req.strategy;
@@ -103,16 +104,24 @@ async fn monitor(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(
         IpAddr::V6(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR)
     };
 
+    if req.timeout_ms < 100 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+
+    let timeout = Duration::from_millis(req.timeout_ms);
+
     if interval < 5 {
         return Err(StatusCode::BAD_REQUEST)
     }
 
     match strat {
         MonitorStrat::Icmp => {
-            let id = state.start_icmp_monitor(target, requester_ipv4, interval)?;
+            let id = state.start_icmp_monitor(target, requester_ipv4, interval, timeout)?;
+            let entry = state.get_entry(id).log_and_return(&state.logger)?;
 
             state.logger.set_mode(LoggerMode::Info);
-            state.logger.log(format!("monitor with id '{}' started successfully", id).as_str());
+            state.logger.monitor_log(format!("monitor with id '{}' started successfully", id).as_str(), entry.log_file);
+            state.logger.runtime_log(format!("monitor with id '{}' started successfully", id).as_str());
 
             Ok(Json(json!({"message": "icmp monitor started successfully", "id": id})))
         },
@@ -124,10 +133,10 @@ async fn monitor(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(
 
 async fn get_entry_history(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(addr): ConnectInfo<SocketAddr>, Path(id): Path<Uuid>) -> Result<Json<Value>, StatusCode> {
     let key = headers.get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or_else(|| "");
-    require_key(key, State(state.clone()), addr, format!("monitor//history/{}", id)).log_and_return(&state.logger)?;
+    require_key(key, State(state.clone()), addr, format!("monitor/history/{}", id)).log_and_return(&state.logger)?;
 
     state.logger.set_mode(LoggerMode::Info);
-    state.logger.log(format!("/monitor/hsitory/{} was called from {}", id, addr.ip()).as_str());
+    state.logger.runtime_log(format!("/monitor/history/{} was called from {}", id, addr.ip()).as_str());
 
     let entry = state.get_entry(id).log_and_return(&state.logger)?;
 
@@ -139,7 +148,7 @@ async fn get_entry_info(State(state): State<AppState>, headers: HeaderMap, Conne
     require_key(key, State(state.clone()), addr, format!("/monitor/info/{}", id)).log_and_return(&state.logger)?;
 
     state.logger.set_mode(LoggerMode::Info);
-    state.logger.log(format!("/monitor/info/{} was called from {}", id, addr.ip()).as_str());
+    state.logger.runtime_log(format!("/monitor/info/{} was called from {}", id, addr.ip()).as_str());
 
     let entry = state.get_entry(id).log_and_return(&state.logger)?;
 
@@ -170,7 +179,7 @@ use axum::response::Html;
 
 async fn ui(State(state): State<AppState>, ConnectInfo(addr): ConnectInfo<SocketAddr>) -> Result<Html<&'static str>, StatusCode> {
     state.logger.set_mode(LoggerMode::Info);
-    state.logger.log(format!("/ui was called from {}", addr.ip()).as_str());
+    state.logger.runtime_log(format!("/ui was called from {}", addr.ip()).as_str());
     Ok(Html(include_str!("static/index.html")))
 }
 
@@ -179,12 +188,12 @@ async fn stop_monitor(State(state): State<AppState>, ConnectInfo(addr): ConnectI
     require_key(key, State(state.clone()), addr, format!("/monitor/{}", id)).log_and_return(&state.logger)?;
 
     state.logger.set_mode(LoggerMode::Info);
-    state.logger.log(format!("/monitor/stop/{} was called from {}", id, addr.ip()).as_str());
+    state.logger.runtime_log(format!("/monitor/stop/{} was called from {}", id, addr.ip()).as_str());
 
     match state.stop_monitor(id) {
         Ok(_) => {
             state.logger.set_mode(LoggerMode::Info);
-            state.logger.log(format!("monitor with id {} successfully stopped", id).as_str());
+            state.logger.runtime_log(format!("monitor with id {} successfully stopped", id).as_str());
             Ok(Json(json!({"message": format!("monitor with id {} successfully stopped", id).as_str()})))
         },
         Err(e) => Err(e.to_status_code())
@@ -196,7 +205,7 @@ async fn get_all_entries(State(state): State<AppState>, ConnectInfo(addr): Conne
     require_key(key, State(state.clone()), addr, "/monitor/info/all".to_string()).log_and_return(&state.logger)?;
 
     state.logger.set_mode(LoggerMode::Info);
-    state.logger.log(format!("/monitor/info/all was called from {}", addr.ip()).as_str());
+    state.logger.runtime_log(format!("/monitor/info/all was called from {}", addr.ip()).as_str());
 
     let mut infos: Vec<MonitorInfo> = Vec::new();
 
@@ -215,7 +224,7 @@ async fn pause_loop(State(state): State<AppState>, ConnectInfo(addr): ConnectInf
     require_key(key, State(state.clone()), addr, format!("/monitor/pause/{}", id)).log_and_return(&state.logger)?;
 
     state.logger.set_mode(LoggerMode::Info);
-    state.logger.log(format!("/monitor/pause/{} was called from {}", id, addr.ip()).as_str());
+    state.logger.runtime_log(format!("/monitor/pause/{} was called from {}", id, addr.ip()).as_str());
 
     state.pause_monitor(id).log_and_return(&state.logger)?;
 
@@ -227,7 +236,7 @@ async fn resume_loop(State(state): State<AppState>, ConnectInfo(addr): ConnectIn
     require_key(key, State(state.clone()), addr, format!("/monitor/resume/{}", id)).log_and_return(&state.logger)?;
 
     state.logger.set_mode(LoggerMode::Info);
-    state.logger.log(format!("/monitor/resume/{} was called from {}", id, addr.ip()).as_str());
+    state.logger.runtime_log(format!("/monitor/resume/{} was called from {}", id, addr.ip()).as_str());
 
     state.resume_monitor(id).log_and_return(&state.logger)?;
 

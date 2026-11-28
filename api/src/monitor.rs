@@ -3,13 +3,16 @@ use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 use axum::http::StatusCode;
+use axum::Json;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+use helpers::logger::LoggerMode;
 use crate::app_state::AppState;
 use crate::errors::LogAndReturn;
 
@@ -49,7 +52,9 @@ pub struct MonitorEntry {
     pub history: VecDeque<PingResult>,
     pub events: broadcast::Sender<PingResult>,
     pub strategy: MonitorStrat,
-    pub paused: bool
+    pub paused: bool,
+    pub timeout: Duration,
+    pub log_file: String
 }
 
 impl MonitorEntry {
@@ -68,6 +73,12 @@ pub struct PingResult {
     pub errors: Vec<Option<String>>,
 }
 
+impl PingResult {
+    pub fn to_json_string(&self) -> String {
+        let json = json!({ "result": self });
+        serde_json::to_string_pretty(&json).unwrap_or_default()
+    }
+}
 #[derive(Serialize, Deserialize)]
 pub struct MonitorInfo {
     pub id: Uuid,
@@ -96,24 +107,23 @@ impl MonitorInfo {
 }
 
 const PING_PER_CHECK: u32 = 3;
-const PING_TIMEOUT: Duration = Duration::from_secs(2);
 
-pub async fn ping(ip: Ipv4Addr) -> Result<Duration, String> {
+pub async fn ping(ip: Ipv4Addr, timeout: Duration) -> Result<Duration, String> {
     let payload = [0u8, 32];
 
-    match tokio::time::timeout(PING_TIMEOUT, surge_ping::ping(IpAddr::V4(ip), &payload)).await {
+    match tokio::time::timeout(timeout, surge_ping::ping(IpAddr::V4(ip), &payload)).await {
         Ok(Ok((_, rtt))) => Ok(rtt),
         Ok(Err(e)) => Err(e.to_string()),
         Err(_) => Err("timeout".to_string())
     }
 }
 
-pub async fn full_icmp_check(ip: Ipv4Addr) -> PingResult {
+pub async fn full_icmp_check(ip: Ipv4Addr, timeout: Duration, state: AppState, entry: MonitorEntry) -> PingResult {
     let mut rtts: Vec<Duration> = Vec::new();
     let mut errors: Vec<Option<String>> = Vec::new();
 
     for _ in 0..PING_PER_CHECK {
-        match ping(ip).await {
+        match ping(ip, timeout).await {
             Ok(rtt) => {
                 rtts.push(rtt);
                 errors.push(None);
@@ -131,14 +141,19 @@ pub async fn full_icmp_check(ip: Ipv4Addr) -> PingResult {
         Some(total.as_secs_f64() * 1000.0 / received as f64)
     };
 
-    PingResult {
+    let result = PingResult {
         at: Utc::now(),
         sent: PING_PER_CHECK,
         received,
         loss_percent: (PING_PER_CHECK - received) as f32 / PING_PER_CHECK as f32 * 100.0,
         avg_rtt_ms,
         errors
-    }
+    };
+
+    state.logger.set_mode(LoggerMode::Info);
+    state.logger.monitor_log(result.to_json_string().as_str(), entry.log_file);
+
+    result
 }
 
 pub struct Loop {
@@ -148,13 +163,15 @@ pub struct Loop {
 }
 impl Loop {
     pub async fn icmp_loop(id: Uuid, state: AppState) -> Result<(), StatusCode>{
-        let (ip, interval, cancel) = {
+        let (ip, interval, cancel, timeout, entry_copy) = {
 
             let entry = state.get_entry(id).log_and_return(&state.logger)?;
 
             let ct = state.get_loop_ct(id).log_and_return(&state.logger)?;
 
-            (entry.ip, entry.interval_sec, ct.clone())
+            let timeout = entry.timeout;
+
+            (entry.ip, entry.interval_sec, ct.clone(), timeout, entry.clone())
         };
 
         let mut ticker = tokio::time::interval(Duration::from_secs(interval));
@@ -164,7 +181,7 @@ impl Loop {
             tokio::select! {
             _ = cancel.cancelled() => return Ok(()),
             _ = ticker.tick() => {
-                let result = full_icmp_check(ip).await;
+                let result = full_icmp_check(ip, timeout, state.clone(), entry_copy.clone()).await;
                 state.record_result(id, result);
             }
         }

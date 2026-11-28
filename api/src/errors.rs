@@ -45,7 +45,7 @@ impl<T> LogAndReturn<T> for Result<T, Errors> {
     fn log_and_return(self, logger: &Logger) -> Result<T, StatusCode> {
         self.map_err(|e| {
             logger.set_mode(LoggerMode::Warn);
-            logger.log(&e.to_string());
+            logger.runtime_log(&e.to_string());
             e.to_status_code()
         })
     }

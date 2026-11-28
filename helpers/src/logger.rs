@@ -3,9 +3,12 @@ use std::fs::{OpenOptions};
 use std::path::{PathBuf};
 use std::sync::RwLock;
 use std::io::Write;
+use uuid::Uuid;
+
 pub struct Logger {
     pub path: PathBuf,
-    pub mode: RwLock<LoggerMode>
+    pub mode: RwLock<LoggerMode>,
+    pub monitor_log_dir: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -38,13 +41,25 @@ impl Logger {
         }
     }
 
-    pub fn log(&self, message: &str) {
-        if let Err(e) = self.write_line(message) {
+    pub fn runtime_log(&self, message: &str) {
+        if let Err(e) = self.write_line(message, None) {
             eprintln!("logger: could not write to {}: {e}", self.path.display());
         }
     }
 
-    fn write_line(&self, message: &str) -> std::io::Result<()> {
+    pub fn monitor_log(&self, message: &str, log_file: String) {
+        let file = self.monitor_log_dir.join(log_file);
+
+        if !file.parent().unwrap().exists() {
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+        }
+
+        if let Err(e) = self.write_line(message, Some(file.clone())) {
+            eprintln!("logger: could not write to {}: {e}", file.display());
+        }
+    }
+
+    fn write_line(&self, message: &str, log_file: Option<PathBuf>) -> std::io::Result<()> {
         let date = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
         let line = format!("{date} | [{}] {message}", self.get_mode_as_str());
 
@@ -54,16 +69,19 @@ impl Logger {
             }
         }
 
+        let target = log_file.unwrap_or_else(|| self.path.clone());
+
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&self.path)?;
+            .open(target)?;
 
-        writeln!(file, "{line}")
+        writeln!(file, "{}", line)
+
     }
 
-    pub fn new(path: PathBuf, mode: LoggerMode) -> Self{
-        Logger {path, mode: RwLock::new(mode)}
+    pub fn new(path: PathBuf, mode: LoggerMode, monitor_log_dir: PathBuf) -> Self{
+        Logger {path, mode: RwLock::new(mode), monitor_log_dir}
     }
 
     pub fn set_mode(&self, mode: LoggerMode) {

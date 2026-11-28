@@ -4,7 +4,7 @@ use crate::monitor::{Loop, MonitorStrat, StratToLoop};
 use crate::monitor::{MonitorEntry, PingResult};
 use axum::http::StatusCode;
 use helpers::config::Config;
-use helpers::logger::Logger;
+use helpers::logger::{Logger, LoggerMode};
 use std::collections::{HashMap, VecDeque};
 use std::net::Ipv4Addr;
 use std::sync::{Arc, Mutex};
@@ -30,11 +30,12 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn start_icmp_monitor(&self, target: Ipv4Addr, requester: Ipv4Addr, interval_sec: u64) -> Result<Uuid, StatusCode> {
+    pub fn start_icmp_monitor(&self, target: Ipv4Addr, requester: Ipv4Addr, interval_sec: u64, timeout: Duration) -> Result<Uuid, StatusCode> {
         let id = Uuid::new_v4();
 
         let (events, _) = broadcast::channel(16);
 
+        let log_file = format!("loop-{}.log", id);
         let mut map = self.monitor_entries.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let entry = MonitorEntry {
             ip: target,
@@ -43,7 +44,9 @@ impl AppState {
             history: VecDeque::new(),
             events,
             strategy: MonitorStrat::Icmp,
-            paused: false
+            paused: false,
+            timeout,
+            log_file
         };
         map.insert(id, entry);
 
@@ -87,8 +90,13 @@ impl AppState {
     }
 
     pub fn stop_monitor(&self, id: Uuid) -> Result<(), Errors> {
+        let entry = self.get_entry(id)?;
+
         let mut map = self.monitor_entries.lock().unwrap();
         let mut loops = self.running_loops.lock().unwrap();
+
+        self.logger.set_mode(LoggerMode::Info);
+        self.logger.monitor_log(format!("monitor with id {} was stopped and removed", id).as_str(), entry.log_file.clone());
 
         if map.remove(&id).is_none() {
             return Err(Errors::EntryNotFound { id });
@@ -102,12 +110,18 @@ impl AppState {
     }
 
     pub fn pause_monitor(&self, id: Uuid) -> Result<(), Errors> {
+        let entry = self.get_entry(id)?;
+
         let mut map = self.monitor_entries.lock().unwrap();
         let mut loops = self.running_loops.lock().unwrap();
+
+        self.logger.set_mode(LoggerMode::Info);
+        self.logger.monitor_log(format!("monitor with id {} was paused", id).as_str(), entry.log_file.clone());
 
         let Some(entry) = map.get_mut(&id) else {
             return Err(Errors::EntryNotFound { id });
         };
+
         if entry.paused {
             return Err(Errors::AlreadyPaused { id });
         }
@@ -127,11 +141,15 @@ impl AppState {
             let Some(entry) = map.get_mut(&id) else {
                 return Err(Errors::EntryNotFound { id });
             };
+
             if !entry.paused {
                 return Err(Errors::NotPaused { id });
             }
 
             entry.set_paused(false);
+
+            self.logger.set_mode(LoggerMode::Info);
+            self.logger.monitor_log(format!("monitor with id {} was resumed", id).as_str(), entry.log_file.clone());
         }
 
         self.spawn_loop(id)?;
@@ -143,7 +161,7 @@ impl AppState {
         let mut loops = self.running_loops.lock().unwrap();
         let ct = self.shutdown.child_token();
         let handle = tokio::spawn(strategy.clone().run_loop(id, self.clone()));
-        loops.push(Loop { id, handle, ct });
+        loops.push(Loop { id, handle, ct});
         Ok(())
     }
 }

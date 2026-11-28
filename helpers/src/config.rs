@@ -5,7 +5,8 @@ use std::net::Ipv4Addr;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct Config {
-    pub log_file: PathBuf,
+    pub runtime_log_file: PathBuf,
+    pub monitor_log_dir: PathBuf,
     pub address: Ipv4Addr,
     pub port: u16,
     pub api_key: String
@@ -52,8 +53,9 @@ impl Config {
 
     fn default() -> Self {
         let config_path = Self::system_config_path();
-        let log_file = config_path.parent().unwrap().join("runtime.log");
+        let runtime_log_file = config_path.parent().unwrap().join("runtime.log");
+        let monitor_log_dir = config_path.parent().unwrap().join("monitors");
 
-        Config {log_file, address: Ipv4Addr::new(127, 0, 0, 1), port: 8000, api_key: String::from("")}
+        Config {runtime_log_file, monitor_log_dir, address: Ipv4Addr::new(127, 0, 0, 1), port: 8000, api_key: String::from("")}
     }
 }
