@@ -1,17 +1,17 @@
-﻿use std::net::{IpAddr, SocketAddr};
+﻿use crate::app_state::AppState;
+use crate::monitor::{MonitorInfo, MonitorStrat};
+use crate::requests::MonitorReq;
 use axum::extract::{ConnectInfo, Path, State};
-use axum::{Json, Router};
 use axum::http::HeaderMap;
 use axum::routing::{delete, get, post};
+use axum::{Json, Router};
+use helpers::logger::LoggerMode;
 use reqwest::StatusCode;
 use serde::Serialize;
 use serde_json::{json, Value};
-use sysinfo::{ProcessesToUpdate};
+use std::net::{IpAddr, SocketAddr};
+use sysinfo::ProcessesToUpdate;
 use uuid::Uuid;
-use helpers::logger::{LoggerMode};
-use helpers::monitor::{MonitorInfo, MonitorStrat};
-use crate::app_state::AppState;
-use crate::requests::{MonitorReq};
 
 async fn root(State(state): State<AppState>, ConnectInfo(addr): ConnectInfo<SocketAddr>) -> Json<Value> {
     state.logger.set_mode(LoggerMode::Info);
@@ -33,7 +33,9 @@ pub fn get_router() -> Router<AppState> {
         .route("/stop/{id}", delete(stop_monitor))
         .route("/history/{id}", get(get_entry_history))
         .route("/info/{id}", get(get_entry_info))
-        .route("/info/all", get(get_all_entries));
+        .route("/info/all", get(get_all_entries))
+        .route("/pause/{id}", post(pause_loop))
+        .route("/resume/{id}", post(resume_loop));
 
     Router::new()
         .route("/", get(root))
@@ -77,9 +79,11 @@ async fn status(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(a
     };
     let _ = state.logger.log(&message);
 
+    let loop_count = state.running_loops.lock().unwrap().len();
     Ok(Json(json!({
         "uptime_sec": uptime_sec,
         "process": process,
+        "running_loops": loop_count
     })))
 }
 
@@ -112,9 +116,9 @@ async fn monitor(State(state): State<AppState>, headers: HeaderMap, ConnectInfo(
 
             Ok(Json(json!({"message": "icmp monitor started successfully", "id": id})))
         },
-        MonitorStrat::Http {path} => {panic!()},
-        MonitorStrat::Tcp {port} => {panic!()},
-        MonitorStrat::Heartbeat => {panic!()}
+        MonitorStrat::Http {path} => {Err(StatusCode::NOT_IMPLEMENTED)},
+        MonitorStrat::Tcp {port} => {Err(StatusCode::NOT_IMPLEMENTED)},
+        MonitorStrat::Heartbeat => {Err(StatusCode::NOT_IMPLEMENTED)}
     }
 }
 
@@ -161,8 +165,8 @@ fn require_key(key: &str, State(state): State<AppState>, addr: SocketAddr, path:
     }
 }
 
+use crate::errors::{Errors, LogAndReturn};
 use axum::response::Html;
-use crate::errors::{LogAndReturn, Errors};
 
 async fn ui(State(state): State<AppState>, ConnectInfo(addr): ConnectInfo<SocketAddr>) -> Result<Html<&'static str>, StatusCode> {
     state.logger.set_mode(LoggerMode::Info);
@@ -204,4 +208,28 @@ async fn get_all_entries(State(state): State<AppState>, ConnectInfo(addr): Conne
     }
 
     Ok(Json(json!({"infos": infos})))
+}
+
+async fn pause_loop(State(state): State<AppState>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Path(id): Path<Uuid>) -> Result<Json<Value>, StatusCode> {
+    let key = headers.get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or_else(|| "");
+    require_key(key, State(state.clone()), addr, format!("/monitor/pause/{}", id)).log_and_return(&state.logger)?;
+
+    state.logger.set_mode(LoggerMode::Info);
+    state.logger.log(format!("/monitor/pause/{} was called from {}", id, addr.ip()).as_str());
+
+    state.pause_monitor(id).log_and_return(&state.logger)?;
+
+    Ok(Json(json!({"message": "loop paused successfully"})))
+}
+
+async fn resume_loop(State(state): State<AppState>, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, Path(id): Path<Uuid>) -> Result<Json<Value>, StatusCode> {
+    let key = headers.get("x-api-key").and_then(|v| v.to_str().ok()).unwrap_or_else(|| "");
+    require_key(key, State(state.clone()), addr, format!("/monitor/resume/{}", id)).log_and_return(&state.logger)?;
+
+    state.logger.set_mode(LoggerMode::Info);
+    state.logger.log(format!("/monitor/resume/{} was called from {}", id, addr.ip()).as_str());
+
+    state.resume_monitor(id).log_and_return(&state.logger)?;
+
+    Ok(Json(json!({"message": "resume successfully"})))
 }

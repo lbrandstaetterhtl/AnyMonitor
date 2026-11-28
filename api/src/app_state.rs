@@ -1,20 +1,20 @@
-﻿use std::collections::{HashMap, VecDeque};
+﻿use crate::errors::{Errors, LogAndReturn};
+use crate::monitor;
+use crate::monitor::{Loop, MonitorStrat, StratToLoop};
+use crate::monitor::{MonitorEntry, PingResult};
+use axum::http::StatusCode;
+use helpers::config::Config;
+use helpers::logger::Logger;
+use std::collections::{HashMap, VecDeque};
 use std::net::Ipv4Addr;
-use sysinfo::System;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use axum::http::StatusCode;
+use sysinfo::System;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
-use uuid::Uuid;
-use helpers::config::Config;
-use helpers::logger::{Logger};
-use helpers::monitor::{MonitorEntry, PingResult};
 use tokio_util::sync::CancellationToken;
-use helpers::monitor;
-use helpers::monitor::MonitorStrat;
-use crate::errors::{LogAndReturn, Errors};
+use uuid::Uuid;
 
 
 const HISTORY_LIMIT: usize = 100;
@@ -42,15 +42,14 @@ impl AppState {
             interval_sec,
             history: VecDeque::new(),
             events,
-            strategy: MonitorStrat::Icmp
+            strategy: MonitorStrat::Icmp,
+            paused: false
         };
         map.insert(id, entry);
 
-        let handle = tokio::spawn(Loop::icmp_loop(id, self.clone()));
-        let ct = self.shutdown.child_token();
-        let icmp_loop = Loop {id, handle, ct};
-        
-        self.running_loops.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.push(icmp_loop);
+        drop(map);
+
+        self.spawn_loop(id).log_and_return(&self.logger)?;
         
         Ok(id)
     }
@@ -95,43 +94,58 @@ impl AppState {
             return Err(Errors::EntryNotFound { id });
         }
 
+        if let Some(index) = loops.iter().position(|l| l.id == id) {
+            loops.remove(index).ct.cancel();
+        }
+
+        Ok(())
+    }
+
+    pub fn pause_monitor(&self, id: Uuid) -> Result<(), Errors> {
+        let mut map = self.monitor_entries.lock().unwrap();
+        let mut loops = self.running_loops.lock().unwrap();
+
+        let Some(entry) = map.get_mut(&id) else {
+            return Err(Errors::EntryNotFound { id });
+        };
+        if entry.paused {
+            return Err(Errors::AlreadyPaused { id });
+        }
         let Some(index) = loops.iter().position(|l| l.id == id) else {
             return Err(Errors::LoopNotFound { id });
         };
 
         loops.remove(index).ct.cancel();
+        entry.set_paused(true);
         Ok(())
     }
-    
-}
 
-pub struct Loop {
-    pub id: Uuid,
-    pub ct: CancellationToken,
-    pub handle: JoinHandle<Result<(), StatusCode>>
-}
-impl Loop {
-    pub async fn icmp_loop(id: Uuid, state: AppState) -> Result<(), StatusCode>{
-        let (ip, interval, cancel) = {
+    pub fn resume_monitor(&self, id: Uuid) -> Result<(), Errors> {
+        {
+            let mut map = self.monitor_entries.lock().unwrap();
 
-            let entry = state.get_entry(id).log_and_return(&state.logger)?;
-
-            let ct = state.get_loop_ct(id).log_and_return(&state.logger)?;
-
-            (entry.ip, entry.interval_sec, ct.clone())
-        };
-
-        let mut ticker = tokio::time::interval(Duration::from_secs(interval));
-        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
-        loop {
-            tokio::select! {
-            _ = cancel.cancelled() => return Ok(()),
-            _ = ticker.tick() => {
-                let result = monitor::full_icmp_check(ip).await;
-                state.record_result(id, result);
+            let Some(entry) = map.get_mut(&id) else {
+                return Err(Errors::EntryNotFound { id });
+            };
+            if !entry.paused {
+                return Err(Errors::NotPaused { id });
             }
+
+            entry.set_paused(false);
         }
-        }
+
+        self.spawn_loop(id)?;
+        Ok(())
+    }
+
+    fn spawn_loop(&self, id: Uuid,) -> Result<(), Errors> {
+        let strategy = self.get_entry(id)?.strategy;
+        let mut loops = self.running_loops.lock().unwrap();
+        let ct = self.shutdown.child_token();
+        let handle = tokio::spawn(strategy.clone().run_loop(id, self.clone()));
+        loops.push(Loop { id, handle, ct });
+        Ok(())
     }
 }
+
+

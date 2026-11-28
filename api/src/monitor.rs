@@ -1,10 +1,21 @@
 ﻿use std::collections::VecDeque;
+use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
+use axum::http::StatusCode;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
+use tokio::time::MissedTickBehavior;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
+use crate::app_state::AppState;
+use crate::errors::LogAndReturn;
+
+pub trait StratToLoop {
+    fn run_loop(self, id: Uuid, state: AppState) -> impl Future<Output = Result<(), StatusCode>> + Send;
+}
 
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "lowercase")]
@@ -15,6 +26,21 @@ pub enum MonitorStrat {
     Heartbeat
 }
 
+impl StratToLoop for MonitorStrat {
+    fn run_loop(self, id: Uuid, state: AppState) -> impl Future<Output = Result<(), StatusCode>> + Send {
+        let strat = self.clone();
+
+        async move {
+            match strat {
+                MonitorStrat::Icmp => Loop::icmp_loop(id, state).await,
+                MonitorStrat::Http { path } => Loop::http_loop(id, state, path).await,
+                MonitorStrat::Tcp {port} => Loop::tcp_loop(id, state, port).await,
+                MonitorStrat::Heartbeat => Loop::heartbeat_loop(id, state).await,
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct MonitorEntry {
     pub ip: Ipv4Addr,
@@ -22,7 +48,14 @@ pub struct MonitorEntry {
     pub interval_sec: u64,
     pub history: VecDeque<PingResult>,
     pub events: broadcast::Sender<PingResult>,
-    pub strategy: MonitorStrat
+    pub strategy: MonitorStrat,
+    pub paused: bool
+}
+
+impl MonitorEntry {
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -44,6 +77,7 @@ pub struct MonitorInfo {
     pub strategy: MonitorStrat,
     pub results: usize,
     pub latest: Option<PingResult>,
+    pub paused: bool
 }
 
 impl MonitorInfo {
@@ -56,6 +90,7 @@ impl MonitorInfo {
             strategy: entry.strategy.clone(),
             results: entry.history.len(),
             latest: entry.history.back().cloned(),
+            paused: entry.paused
         }
     }
 }
@@ -103,5 +138,48 @@ pub async fn full_icmp_check(ip: Ipv4Addr) -> PingResult {
         loss_percent: (PING_PER_CHECK - received) as f32 / PING_PER_CHECK as f32 * 100.0,
         avg_rtt_ms,
         errors
+    }
+}
+
+pub struct Loop {
+    pub id: Uuid,
+    pub ct: CancellationToken,
+    pub handle: JoinHandle<Result<(), StatusCode>>
+}
+impl Loop {
+    pub async fn icmp_loop(id: Uuid, state: AppState) -> Result<(), StatusCode>{
+        let (ip, interval, cancel) = {
+
+            let entry = state.get_entry(id).log_and_return(&state.logger)?;
+
+            let ct = state.get_loop_ct(id).log_and_return(&state.logger)?;
+
+            (entry.ip, entry.interval_sec, ct.clone())
+        };
+
+        let mut ticker = tokio::time::interval(Duration::from_secs(interval));
+        ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+        loop {
+            tokio::select! {
+            _ = cancel.cancelled() => return Ok(()),
+            _ = ticker.tick() => {
+                let result = full_icmp_check(ip).await;
+                state.record_result(id, result);
+            }
+        }
+        }
+    }
+
+    pub async fn tcp_loop(id: Uuid, state: AppState, port: u16) -> Result<(), StatusCode> {
+        Err(StatusCode::NOT_IMPLEMENTED)
+    }
+
+    pub async fn http_loop(id: Uuid, state: AppState, path: String) -> Result<(), StatusCode> {
+        Err(StatusCode::NOT_IMPLEMENTED)
+    }
+
+    pub async fn heartbeat_loop(id: Uuid, state: AppState) -> Result<(), StatusCode> {
+        Err(StatusCode::NOT_IMPLEMENTED)
     }
 }

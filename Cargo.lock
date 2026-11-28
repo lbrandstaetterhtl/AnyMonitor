@@ -37,6 +37,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "surge-ping",
  "sysinfo",
  "thiserror",
  "tokio",

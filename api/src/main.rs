@@ -2,18 +2,19 @@ pub mod router;
 mod app_state;
 pub mod requests;
 pub mod errors;
+pub mod monitor;
 
-use std::collections::{HashMap};
-use sysinfo::System;
-use std::net::{IpAddr, SocketAddr};
-use helpers::{logger::Logger, config::Config};
-use helpers::logger::LoggerMode;
 use crate::app_state::AppState;
+use helpers::logger::LoggerMode;
+use helpers::{config::Config, logger::Logger};
+use monitor::MonitorEntry;
+use std::collections::HashMap;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use sysinfo::System;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-use helpers::monitor::MonitorEntry;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

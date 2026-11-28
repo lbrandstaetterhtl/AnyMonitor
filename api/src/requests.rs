@@ -1,6 +1,6 @@
-﻿use std::net::Ipv4Addr;
+﻿use crate::monitor::MonitorStrat;
 use serde::{Deserialize, Serialize};
-use helpers::monitor::MonitorStrat;
+use std::net::Ipv4Addr;
 
 #[derive(Serialize, Deserialize)]
 pub struct MonitorReq {

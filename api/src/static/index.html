@@ -6,7 +6,7 @@
   <title>AnyMonitor</title>
   <style>
     :root { color-scheme: light dark; font: 14px/1.5 system-ui, sans-serif; }
-    body { max-width: 960px; margin: 0 auto; padding: 16px; }
+    body { max-width: 1000px; margin: 0 auto; padding: 16px; }
     header { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
     h1 { font-size: 20px; margin: 0; }
     h2 { font-size: 16px; margin: 0 0 10px; }
@@ -20,9 +20,10 @@
     .r { text-align: right; }
     .ok { color: #1f8a4c; font-weight: 600; }
     .bad { color: #d0453c; font-weight: 600; }
+    .paused { color: #b07d10; font-weight: 600; }
     .muted { color: GrayText; }
     #msg { color: #d0453c; min-height: 1.5em; margin: 8px 0 0; }
-    td.wrap { white-space: normal; max-width: 360px; overflow-wrap: anywhere; font-size: 12px; }
+    td.wrap { white-space: normal; max-width: 340px; overflow-wrap: anywhere; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -43,12 +44,12 @@
   <h2>Monitore <span class="muted">· aktualisiert alle 5 s</span></h2>
   <form id="startForm">
     <input id="target" placeholder="Ziel-IP" value="127.0.0.1" required>
-    <label>alle <input id="interval" type="number" min="1" value="5" style="width: 60px"> s</label>
+    <label>alle <input id="interval" type="number" min="5" value="5" style="width: 60px"> s</label>
     <button>ICMP-Monitor starten</button>
   </form>
   <table>
     <thead>
-    <tr><th>Ziel</th><th class="r">Intervall</th><th>Gestartet von</th><th class="r">Ergebnisse</th><th>Zuletzt</th><th></th></tr>
+    <tr><th>Ziel</th><th>Strategie</th><th class="r">Intervall</th><th>Gestartet von</th><th class="r">Ergebnisse</th><th>Zustand</th><th></th></tr>
     </thead>
     <tbody id="monitors"></tbody>
   </table>
@@ -67,8 +68,8 @@
 <section>
   <h2>Fehler testen</h2>
   <p class="muted">
-    Schickt absichtlich fehlerhafte Requests. „Erwartet“ ist der Status, den eine saubere API liefern sollte.
-    Die Tests verwenden den API-Key von oben, außer sie testen den Key selbst.
+    Schickt absichtlich fehlerhafte Requests. „Erwartet“ ist das Verhalten einer sauberen API.
+    Tests mit „Testmonitor“ legen kurz einen Monitor auf 127.0.0.1 an und stoppen ihn danach wieder.
   </p>
   <button id="btnRunAll">Alle ausführen</button>
   <table>
@@ -134,6 +135,14 @@
     return result.online ?? result.received > 0;
   }
 
+  function parseJson(text) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+
   // ---------- Status ----------
 
   $("btnStatus").onclick = () => run(async () => {
@@ -141,8 +150,9 @@
     const p = s.process ?? {};
     const h = Math.floor(s.uptime_sec / 3600);
     const m = Math.floor((s.uptime_sec % 3600) / 60);
+    const loops = s.running_loops != null ? ` · Loops ${s.running_loops}` : "";
     $("status").textContent =
-            `Uptime ${h}h ${m}m ${s.uptime_sec % 60}s · RAM ${p.memory_mb ?? "–"} MB · CPU ${p.cpu_usage_percent?.toFixed(1) ?? "–"} %`;
+            `Uptime ${h}h ${m}m ${s.uptime_sec % 60}s · RAM ${p.memory_mb ?? "–"} MB · CPU ${p.cpu_usage_percent?.toFixed(1) ?? "–"} %${loops}`;
   });
 
   // ---------- Monitore ----------
@@ -171,9 +181,7 @@
     tbody.replaceChildren();
 
     if (!monitors.length) {
-      const tr = tbody.insertRow();
-      const td = cell(tr, "Keine Monitore aktiv.", "muted");
-      td.colSpan = 6;
+      cell(tbody.insertRow(), "Keine Monitore aktiv.", "muted").colSpan = 7;
       return;
     }
 
@@ -182,11 +190,14 @@
       if (m.id === selectedId) tr.className = "selected";
 
       cell(tr, m.ip);
+      cell(tr, strategyName(m.strategy));
       cell(tr, `${m.interval_sec} s`, "r");
       cell(tr, m.ip_requester ?? "–", "muted");
       cell(tr, m.results ?? "–", "r");
 
-      if (m.latest) {
+      if (m.paused) {
+        cell(tr, "pausiert", "paused");
+      } else if (m.latest) {
         const online = isOnline(m.latest);
         cell(tr, online ? "online" : "offline", online ? "ok" : "bad");
       } else {
@@ -197,9 +208,22 @@
       actions.append(
               button("Verlauf", () => select(m.id)),
               " ",
+              m.paused
+                      ? button("Fortsetzen", () => run(() => action("resume", m.id)))
+                      : button("Pausieren", () => run(() => action("pause", m.id))),
+              " ",
               button("Stoppen", () => run(() => stop(m.id))),
       );
     }
+  }
+
+  // "icmp" → "ICMP", {"tcp": {"port": 80}} → "TCP :80", {"http": {"path": "/"}} → "HTTP /"
+  function strategyName(strategy) {
+    if (typeof strategy === "string") return strategy.toUpperCase();
+    const [name, fields] = Object.entries(strategy ?? {})[0] ?? ["?", {}];
+    if (fields?.port != null) return `${name.toUpperCase()} :${fields.port}`;
+    if (fields?.path != null) return `${name.toUpperCase()} ${fields.path}`;
+    return name.toUpperCase();
   }
 
   $("startForm").onsubmit = (e) => {
@@ -216,12 +240,17 @@
     });
   };
 
+  async function action(name, id) {
+    await api("POST", `/monitor/${name}/${id}`);
+    await refresh();
+  }
+
   async function stop(id) {
     try {
       await api("DELETE", `/monitor/stop/${id}`);
     } catch (e) {
-      // 400: Server kennt den Monitor nicht (mehr) → einfach Liste neu laden
-      if (e.status !== 400) throw e;
+      // 404: Server kennt den Monitor nicht (mehr) → einfach Liste neu laden
+      if (e.status !== 404) throw e;
     }
     if (selectedId === id) select(null);
     await refresh();
@@ -249,8 +278,7 @@
     tbody.replaceChildren();
 
     if (!history.length) {
-      const td = cell(tbody.insertRow(), "Noch keine Ergebnisse.", "muted");
-      td.colSpan = 6;
+      cell(tbody.insertRow(), "Noch keine Ergebnisse.", "muted").colSpan = 6;
       return;
     }
 
@@ -289,23 +317,78 @@
   const startBody = (overrides) =>
           JSON.stringify({ target: "127.0.0.1", strategy: "icmp", interval_sec: 5, ...overrides });
 
+  // Legt einen Testmonitor an, führt die Schritte aus und stoppt ihn danach wieder
+  async function withMonitor(steps) {
+    const start = await raw("POST", "/monitor/start", { body: startBody() });
+    const id = parseJson(start.text)?.id;
+    if (!id) return { status: start.status, text: "Testmonitor konnte nicht angelegt werden: " + start.text };
+
+    try {
+      return await steps(id);
+    } finally {
+      await raw("DELETE", `/monitor/stop/${id}`);
+    }
+  }
+
   const scenarios = [
-    { name: "Falscher API-Key",                 expect: 401, run: () => raw("GET", "/status", { key: "falsch" }) },
-    { name: "Kein API-Key",                     expect: 401, run: () => raw("GET", "/status", { key: null }) },
-    { name: "Unbekannte ID (History)",          expect: 404, run: () => raw("GET", `/monitor/history/${UNKNOWN_ID}`) },
-    { name: "Unbekannte ID (Info)",             expect: 404, run: () => raw("GET", `/monitor/info/${UNKNOWN_ID}`) },
-    { name: "Unbekannte ID stoppen",            expect: 404, run: () => raw("DELETE", `/monitor/stop/${UNKNOWN_ID}`) },
-    { name: "ID ist keine UUID",                expect: 400, run: () => raw("GET", "/monitor/history/abc") },
-    { name: "Body ist kein JSON",               expect: 400, run: () => raw("POST", "/monitor/start", { body: "kein json" }) },
-    { name: "Falscher Content-Type",            expect: 415, run: () => raw("POST", "/monitor/start", { body: startBody(), contentType: "text/plain" }) },
-    { name: "Pflichtfeld fehlt",                expect: 422, run: () => raw("POST", "/monitor/start", { body: JSON.stringify({ target: "127.0.0.1" }) }) },
-    { name: "Ungültige IP",                     expect: 422, run: () => raw("POST", "/monitor/start", { body: startBody({ target: "999.1.1.1" }) }) },
-    { name: "Unbekannte Strategie",             expect: 422, run: () => raw("POST", "/monitor/start", { body: startBody({ strategy: "Foo" }) }) },
-    { name: "Intervall 0",                      expect: 400, run: () => raw("POST", "/monitor/start", { body: startBody({ interval_sec: 0 }) }) },
-    { name: "Strategie nicht umgesetzt (Tcp)",  expect: 501, run: () => raw("POST", "/monitor/start", { body: startBody({ strategy: { tcp: { port: 80 } } }) }) },
-    { name: "Falscher Key + kaputter Body",     expect: 401, run: () => raw("POST", "/monitor/start", { key: "falsch", body: "kein json" }) },
-    { name: "Unbekannte Route",                 expect: 404, run: () => raw("GET", "/gibt-es-nicht") },
-    { name: "Falsche Methode",                  expect: 405, run: () => raw("GET", "/monitor/start") },
+    // ---- API-Key ----
+    { name: "Falscher API-Key", expect: 401, run: () => raw("GET", "/status", { key: "falsch" }) },
+    { name: "Kein API-Key", expect: 401, run: () => raw("GET", "/status", { key: null }) },
+    { name: "Falscher Key + kaputter Body", expect: 401, run: () => raw("POST", "/monitor/start", { key: "falsch", body: "kein json" }) },
+
+    // ---- IDs ----
+    { name: "Unbekannte ID (History)", expect: 404, run: () => raw("GET", `/monitor/history/${UNKNOWN_ID}`) },
+    { name: "Unbekannte ID (Info)", expect: 404, run: () => raw("GET", `/monitor/info/${UNKNOWN_ID}`) },
+    { name: "Unbekannte ID stoppen", expect: 404, run: () => raw("DELETE", `/monitor/stop/${UNKNOWN_ID}`) },
+    { name: "Unbekannte ID pausieren", expect: 404, run: () => raw("POST", `/monitor/pause/${UNKNOWN_ID}`) },
+    { name: "Unbekannte ID fortsetzen", expect: 404, run: () => raw("POST", `/monitor/resume/${UNKNOWN_ID}`) },
+    { name: "ID ist keine UUID", expect: 400, run: () => raw("GET", "/monitor/history/abc") },
+
+    // ---- Request-Body ----
+    { name: "Body ist kein JSON", expect: 400, run: () => raw("POST", "/monitor/start", { body: "kein json" }) },
+    { name: "Falscher Content-Type", expect: 415, run: () => raw("POST", "/monitor/start", { body: startBody(), contentType: "text/plain" }) },
+    { name: "Pflichtfeld fehlt", expect: 422, run: () => raw("POST", "/monitor/start", { body: JSON.stringify({ target: "127.0.0.1" }) }) },
+    { name: "Ungültige IP", expect: 422, run: () => raw("POST", "/monitor/start", { body: startBody({ target: "999.1.1.1" }) }) },
+    { name: "Unbekannte Strategie", expect: 422, run: () => raw("POST", "/monitor/start", { body: startBody({ strategy: "foo" }) }) },
+    { name: "Intervall 0", expect: 400, run: () => raw("POST", "/monitor/start", { body: startBody({ interval_sec: 0 }) }) },
+    { name: "Intervall unter Minimum (4 s)", expect: 400, run: () => raw("POST", "/monitor/start", { body: startBody({ interval_sec: 4 }) }) },
+    { name: "Strategie nicht umgesetzt (tcp)", expect: 501, run: () => raw("POST", "/monitor/start", { body: startBody({ strategy: { tcp: { port: 80 } } }) }) },
+
+    // ---- Pause / Fortsetzen (mit Testmonitor) ----
+    {
+      name: "Testmonitor: Pause wird gespeichert",
+      expect: 'paused: true',
+      pass: (res) => res.status === 200 && parseJson(res.text)?.info?.paused === true,
+      run: () => withMonitor(async (id) => {
+        await raw("POST", `/monitor/pause/${id}`);
+        return raw("GET", `/monitor/info/${id}`);
+      }),
+    },
+    {
+      name: "Testmonitor: zweimal pausieren",
+      expect: 409,
+      run: () => withMonitor(async (id) => {
+        await raw("POST", `/monitor/pause/${id}`);
+        return raw("POST", `/monitor/pause/${id}`);
+      }),
+    },
+    {
+      name: "Testmonitor: fortsetzen ohne Pause",
+      expect: 409,
+      run: () => withMonitor((id) => raw("POST", `/monitor/resume/${id}`)),
+    },
+    {
+      name: "Testmonitor: pausierten Monitor stoppen",
+      expect: 200,
+      run: () => withMonitor(async (id) => {
+        await raw("POST", `/monitor/pause/${id}`);
+        return raw("DELETE", `/monitor/stop/${id}`);
+      }),
+    },
+
+    // ---- Routing ----
+    { name: "Unbekannte Route", expect: 404, run: () => raw("GET", "/gibt-es-nicht") },
+    { name: "Falsche Methode", expect: 405, run: () => raw("GET", "/monitor/start") },
   ];
 
   function renderTests() {
@@ -325,7 +408,7 @@
     s.got.className = "r muted";
 
     const res = await s.run();
-    const pass = res.status === s.expect;
+    const pass = s.pass ? s.pass(res) : res.status === s.expect;
 
     s.got.textContent = `${res.status === 0 ? "keine" : res.status} ${pass ? "✓" : "✗"}`;
     s.got.className = "r " + (pass ? "ok" : "bad");
